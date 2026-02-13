@@ -41,6 +41,22 @@ if [ -f "$NGINX_CONF_FILE" ]; then
     git pull
     echo -e "${GREEN}✔ Код успешно обновлен.${NC}"
 
+    echo -e "\n${CYAN}Шаг 1.1: Проверка и обновление конфигурации Nginx...${NC}"
+    if ! grep -q "client_max_body_size" "$NGINX_CONF_FILE"; then
+        echo -e "${YELLOW}Добавляем client_max_body_size 100M в конфигурацию Nginx...${NC}"
+        # Вставка после директивы server_name
+        sudo sed -i '/server_name/a \    client_max_body_size 100M;' "$NGINX_CONF_FILE"
+        
+        if sudo nginx -t; then
+            sudo systemctl reload nginx
+            echo -e "${GREEN}✔ Конфигурация Nginx обновлена и перезагружена.${NC}"
+        else
+            echo -e "${RED}Ошибка проверки конфигурации Nginx. Изменения не применены.${NC}"
+        fi
+    else
+        echo -e "${GREEN}✔ Конфигурация Nginx уже содержит необходимые настройки.${NC}"
+    fi
+
     echo -e "\n${CYAN}Шаг 2: Пересборка и перезапуск Docker-контейнеров...${NC}"
     sudo docker-compose down --remove-orphans && sudo docker-compose up -d --build
     
