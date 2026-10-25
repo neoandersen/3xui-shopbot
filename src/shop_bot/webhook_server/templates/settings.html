@@ -124,6 +124,38 @@
 								<input type="text" id="host_subscription_url" name="host_subscription_url" placeholder="например, https://sub.example.com/{token}" />
 								<small>Укажите ссылку на подписку для этого хоста.</small>
 							</div>
+							<div class="mt-3 mb-2">
+								<a class="text-decoration-none text-secondary small" data-bs-toggle="collapse" href="#addHostSshSection" role="button" aria-expanded="false" aria-controls="addHostSshSection">
+									<i class="fas fa-terminal me-1"></i>Настройки SSH для сервера (опционально) ▾
+								</a>
+							</div>
+							<div class="collapse mb-3" id="addHostSshSection">
+								<div class="p-3 border rounded bg-body-tertiary">
+									<div class="form-group mb-2">
+										<label for="new_ssh_host">SSH Host:</label>
+										<input type="text" id="new_ssh_host" name="ssh_host" class="form-control" placeholder="example.com или 1.2.3.4" />
+									</div>
+									<div class="row g-2 mb-2">
+										<div class="col-6">
+											<label for="new_ssh_port">Port:</label>
+											<input type="number" id="new_ssh_port" name="ssh_port" class="form-control" placeholder="22" value="22" />
+										</div>
+										<div class="col-6">
+											<label for="new_ssh_user">User:</label>
+											<input type="text" id="new_ssh_user" name="ssh_user" class="form-control" placeholder="root" value="root" />
+										</div>
+									</div>
+									<div class="form-group mb-2">
+										<label for="new_ssh_password">Пароль SSH (если без ключа):</label>
+										<input type="password" id="new_ssh_password" name="ssh_password" class="form-control" />
+									</div>
+									<div class="form-group mb-1">
+										<label for="new_ssh_key_content">Приватный SSH-ключ (опционально):</label>
+										<textarea class="form-control font-monospace" name="ssh_key_content" id="new_ssh_key_content" rows="4" placeholder="Вставьте сюда содержимое приватного ключа (-----BEGIN ... PRIVATE KEY-----)"></textarea>
+										<small class="text-secondary">Если указан ключ — пароль может быть пустым.</small>
+									</div>
+								</div>
+							</div>
 							<button type="submit" class="btn btn-primary">Добавить</button>
 						</form>
 					</div>
@@ -200,9 +232,37 @@
                           <label class="form-label" for="ssh_password_{{ loop.index }}">Пароль (или оставьте пустым при ключе)</label>
                           <input id="ssh_password_{{ loop.index }}" type="password" class="form-control pill" name="ssh_password" value="{{ host.ssh_password or '' }}" />
                         </div>
-                        <div class="col-12 col-md-7">
-                          <label class="form-label" for="ssh_key_path_{{ loop.index }}">Путь к приватному ключу (на сервере панели)</label>
-                          <input id="ssh_key_path_{{ loop.index }}" type="text" class="form-control pill" name="ssh_key_path" value="{{ host.ssh_key_path or '' }}" placeholder="/app/keys/id_rsa" />
+                        <div class="col-12">
+                          <label class="form-label d-flex justify-content-between align-items-center" for="ssh_key_content_{{ loop.index }}">
+                            <span>Приватный SSH-ключ (опционально)</span>
+                            {% if host.ssh_key_path %}
+                              <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                <i class="fas fa-check-circle me-1"></i>Ключ сохранён: {{ host.ssh_key_path }}
+                              </span>
+                            {% endif %}
+                          </label>
+                          <textarea class="form-control font-monospace"
+                                    name="ssh_key_content"
+                                    id="ssh_key_content"
+                                    rows="5"
+                                    placeholder="Вставьте сюда содержимое приватного ключа (-----BEGIN ... PRIVATE KEY-----)"></textarea>
+                          <div class="d-flex justify-content-between align-items-center mt-1">
+                            <small class="text-secondary">
+                              {% if host.ssh_key_path %}
+                                Оставьте пустым, чтобы сохранить текущий ключ ({{ host.ssh_key_path }}).
+                              {% else %}
+                                Если используется пароль или ключ не требуется — оставьте пустым.
+                              {% endif %}
+                            </small>
+                            {% if host.ssh_key_path %}
+                              <div class="form-check m-0">
+                                <input class="form-check-input" type="checkbox" name="clear_ssh_key" value="1" id="clear_ssh_key_{{ loop.index }}">
+                                <label class="form-check-label text-danger small" for="clear_ssh_key_{{ loop.index }}">
+                                  Удалить привязку ключа
+                                </label>
+                              </div>
+                            {% endif %}
+                          </div>
                         </div>
                         <div class="col-12 col-md-5 d-flex align-items-end">
                           <button type="submit" class="btn btn-primary btn-sm pill">Сохранить SSH</button>

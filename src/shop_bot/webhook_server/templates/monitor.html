@@ -140,8 +140,11 @@
                 </div>
                 <div class="server-status">
                   <div class="status-indicator" id="host-status-{{ loop.index }}"></div>
-                  <button class="btn btn-outline-primary btn-sm server-item" data-host="{{ h.host_name }}" data-target="#host-{{ loop.index }}">
+                  <button class="btn btn-outline-primary btn-sm server-item" data-host="{{ h.host_name }}" data-target="#host-{{ loop.index }}" title="Обновить метрики">
                     <i class="fas fa-sync-alt"></i>
+                  </button>
+                  <button type="button" class="btn btn-outline-secondary btn-sm ms-1" data-bs-toggle="modal" data-bs-target="#hostSshModal-{{ loop.index }}" title="Настройки SSH">
+                    <i class="fas fa-key"></i>
                   </button>
                 </div>
               </div>
@@ -1113,4 +1116,76 @@
   init();
 })();
 </script>
+
+{% if hosts %}
+  {% for h in hosts %}
+  <!-- Modal: Редактирование SSH для хоста {{ h.host_name }} -->
+  <div class="modal modal-blur fade" id="hostSshModal-{{ loop.index }}" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+        <form action="{{ url_for('update_host_ssh_route') }}" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input type="hidden" name="host_name" value="{{ h.host_name }}" />
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="fas fa-key me-2 text-primary"></i>Настройки SSH — {{ h.host_name }}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="m_ssh_host_{{ loop.index }}">SSH Host</label>
+                <input id="m_ssh_host_{{ loop.index }}" type="text" class="form-control" name="ssh_host" value="{{ h.ssh_host or '' }}" placeholder="example.com или 1.2.3.4" />
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label" for="m_ssh_port_{{ loop.index }}">Port</label>
+                <input id="m_ssh_port_{{ loop.index }}" type="number" class="form-control" name="ssh_port" value="{{ h.ssh_port or 22 }}" placeholder="22" />
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label" for="m_ssh_user_{{ loop.index }}">User</label>
+                <input id="m_ssh_user_{{ loop.index }}" type="text" class="form-control" name="ssh_user" value="{{ h.ssh_user or 'root' }}" placeholder="root" />
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="m_ssh_password_{{ loop.index }}">Пароль SSH (если без ключа)</label>
+                <input id="m_ssh_password_{{ loop.index }}" type="password" class="form-control" name="ssh_password" value="{{ h.ssh_password or '' }}" />
+              </div>
+              <div class="col-12">
+                <label class="form-label d-flex justify-content-between align-items-center" for="ssh_key_content">
+                  <span>Приватный SSH-ключ (опционально)</span>
+                  {% if h.ssh_key_path %}
+                    <span class="badge bg-success-subtle text-success border border-success-subtle">
+                      <i class="fas fa-check-circle me-1"></i>Ключ сохранён: {{ h.ssh_key_path }}
+                    </span>
+                  {% endif %}
+                </label>
+                <textarea class="form-control font-monospace" name="ssh_key_content" id="ssh_key_content" rows="5" placeholder="Вставьте сюда содержимое приватного ключа (-----BEGIN ... PRIVATE KEY-----)"></textarea>
+                <div class="d-flex justify-content-between align-items-center mt-1">
+                  <small class="text-secondary">
+                    {% if h.ssh_key_path %}
+                      Оставьте пустым, чтобы сохранить текущий ключ ({{ h.ssh_key_path }}).
+                    {% else %}
+                      Если используется авторизация по паролю или ключ не требуется — оставьте пустым.
+                    {% endif %}
+                  </small>
+                  {% if h.ssh_key_path %}
+                    <div class="form-check m-0">
+                      <input class="form-check-input" type="checkbox" name="clear_ssh_key" value="1" id="m_clear_ssh_key_{{ loop.index }}">
+                      <label class="form-check-label text-danger small" for="m_clear_ssh_key_{{ loop.index }}">
+                        Удалить привязку ключа
+                      </label>
+                    </div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+            <button type="submit" class="btn btn-primary">Сохранить SSH</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+{% endif %}
 {% endblock %}

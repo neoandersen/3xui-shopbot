@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 import logging
@@ -10,6 +11,26 @@ import paramiko
 from shop_bot.data_manager import database
 
 logger = logging.getLogger(__name__)
+
+
+def _load_paramiko_pkey(ssh_key_path: str | None, passphrase: str | None = None):
+    """Load RSA, Ed25519, or ECDSA key from file with optional passphrase."""
+    if not ssh_key_path or not os.path.isfile(ssh_key_path):
+        return None
+    key_classes = [paramiko.RSAKey, paramiko.Ed25519Key]
+    if hasattr(paramiko, 'ECDSAKey'):
+        key_classes.append(paramiko.ECDSAKey)
+    for KeyClass in key_classes:
+        try:
+            return KeyClass.from_private_key_file(ssh_key_path, password=passphrase)
+        except Exception:
+            pass
+        if passphrase:
+            try:
+                return KeyClass.from_private_key_file(ssh_key_path)
+            except Exception:
+                pass
+    return None
 
 
 def _parse_host_port_from_url(url: str) -> tuple[str | None, int | None, bool]:
@@ -183,18 +204,8 @@ async def ssh_speedtest_for_host(host_row: dict) -> dict:
     def _run_ssh() -> dict:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        if ssh_key_path:
-            pkey = None
-            try:
-                pkey = paramiko.RSAKey.from_private_key_file(ssh_key_path)
-            except Exception:
-                try:
-                    pkey = paramiko.Ed25519Key.from_private_key_file(ssh_key_path)
-                except Exception:
-                    pkey = None
-            ssh.connect(ssh_host, port=ssh_port, username=ssh_user, password=ssh_password, pkey=pkey, timeout=20)
-        else:
-            ssh.connect(ssh_host, port=ssh_port, username=ssh_user, password=ssh_password, timeout=20)
+        pkey = _load_paramiko_pkey(ssh_key_path, ssh_password) if ssh_key_path else None
+        ssh.connect(ssh_host, port=ssh_port, username=ssh_user, password=ssh_password, pkey=pkey, timeout=20)
 
         # Prefer Ookla CLI json format
         data, err = _ssh_exec_json(ssh, [
@@ -301,15 +312,7 @@ def _ssh_connect(host_row: dict) -> paramiko.SSHClient:
         raise RuntimeError('SSH settings are not configured for host')
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    pkey = None
-    if ssh_key_path:
-        try:
-            pkey = paramiko.RSAKey.from_private_key_file(ssh_key_path)
-        except Exception:
-            try:
-                pkey = paramiko.Ed25519Key.from_private_key_file(ssh_key_path)
-            except Exception:
-                pkey = None
+    pkey = _load_paramiko_pkey(ssh_key_path, ssh_password) if ssh_key_path else None
     ssh.connect(ssh_host, port=ssh_port, username=ssh_user, password=ssh_password, pkey=pkey, timeout=20)
     return ssh
 

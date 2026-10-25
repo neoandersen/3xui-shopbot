@@ -1,4 +1,6 @@
 import os
+import io
+import re
 import logging
 import asyncio
 import json
@@ -7,6 +9,8 @@ import html as html_escape
 import base64
 import time
 import uuid
+from pathlib import Path
+from typing import Optional, Tuple
 from hmac import compare_digest
 from datetime import datetime
 from functools import wraps
@@ -941,6 +945,71 @@ def create_webhook_app(bot_controller_instance):
         flash('Комментарий обновлён.' if ok else 'Не удалось обновить комментарий.', 'success' if ok else 'danger')
         return redirect(request.referrer or url_for('admin_keys_page'))
 
+    # --- Host SSH key storage & validation helpers ---
+    def get_ssh_keys_dir() -> Path:
+        base_dir = Path("/app/project/data/ssh_keys") if Path("/app/project").exists() else (database.PROJECT_ROOT / "data" / "ssh_keys")
+        base_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(base_dir, 0o700)
+        except Exception:
+            pass
+        return base_dir
+
+    def save_host_ssh_key(host_name: str, key_content: str) -> str:
+        """Save raw SSH private key content to a secure file.
+        Directory: /app/project/data/ssh_keys/ (or local fallback).
+        File: host_{safe_name}.key with 0o600 permissions and normalized LF line endings.
+        Returns the resolved string path of the key file.
+        """
+        base_dir = get_ssh_keys_dir()
+        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', host_name).strip('_') or 'node'
+        key_file = base_dir / f"host_{safe_name}.key"
+
+        # Normalize line endings to LF (\n) to prevent PEM format errors
+        clean_content = key_content.strip().replace('\r\n', '\n').replace('\r', '\n') + '\n'
+        key_file.write_text(clean_content, encoding='utf-8')
+
+        try:
+            os.chmod(key_file, 0o600)
+        except Exception as e:
+            logger.warning(f"Failed to set 0o600 permissions on {key_file}: {e}")
+
+        return str(key_file.resolve())
+
+    def validate_ssh_private_key(key_content: str, passphrase: Optional[str] = None) -> Tuple[bool, str]:
+        """Validate that key_content is a syntactically plausible private key,
+        and try to parse it with Paramiko if available.
+        Returns (is_valid, message).
+        """
+        clean = key_content.strip()
+        if not clean.startswith('-----BEGIN') or 'PRIVATE KEY-----' not in clean:
+            return False, "Ключ должен начинаться со стандартного заголовка '-----BEGIN ... PRIVATE KEY-----'"
+        try:
+            import paramiko
+            key_classes = [paramiko.RSAKey, paramiko.Ed25519Key]
+            if hasattr(paramiko, 'ECDSAKey'):
+                key_classes.append(paramiko.ECDSAKey)
+            parsed = False
+            for key_cls in key_classes:
+                try:
+                    key_cls.from_private_key(io.StringIO(clean), password=passphrase)
+                    parsed = True
+                    break
+                except Exception:
+                    pass
+                if passphrase:
+                    try:
+                        key_cls.from_private_key(io.StringIO(clean))
+                        parsed = True
+                        break
+                    except Exception:
+                        pass
+            if not parsed:
+                return True, "Ключ сохранён (формат PEM/OpenSSH)."
+            return True, "Ключ успешно проверен и сохранён."
+        except Exception as e:
+            return True, f"Ключ сохранён: {e}"
+
     # --- Host SSH settings update ---
     @flask_app.route('/admin/hosts/ssh/update', methods=['POST'])
     @login_required
@@ -950,7 +1019,23 @@ def create_webhook_app(bot_controller_instance):
         ssh_port_raw = (request.form.get('ssh_port') or '').strip()
         ssh_user = (request.form.get('ssh_user') or '').strip() or None
         ssh_password = request.form.get('ssh_password')  # allow empty to clear
-        ssh_key_path = (request.form.get('ssh_key_path') or '').strip() or None
+        ssh_key_content = (request.form.get('ssh_key_content') or '').strip()
+        clear_ssh_key = bool(request.form.get('clear_ssh_key'))
+
+        current_host = get_host(host_name)
+        old_key_path = (current_host.get('ssh_key_path') or '').strip() if current_host else ''
+
+        if clear_ssh_key:
+            ssh_key_path = None
+        elif ssh_key_content:
+            ssh_key_path = save_host_ssh_key(host_name, ssh_key_content)
+            is_valid, msg = validate_ssh_private_key(ssh_key_content, passphrase=ssh_password)
+            if not is_valid:
+                flash(f"Предупреждение: {msg}", 'warning')
+        else:
+            # Если поле пустое, но ключ уже был привязан ранее — оставляем старый путь
+            ssh_key_path = old_key_path or (request.form.get('ssh_key_path') or '').strip() or None
+
         ssh_port = None
         try:
             ssh_port = int(ssh_port_raw) if ssh_port_raw else None
@@ -959,7 +1044,7 @@ def create_webhook_app(bot_controller_instance):
         ok = update_host_ssh_settings(host_name, ssh_host=ssh_host, ssh_port=ssh_port, ssh_user=ssh_user,
                                       ssh_password=ssh_password, ssh_key_path=ssh_key_path)
         flash('SSH-параметры обновлены.' if ok else 'Не удалось обновить SSH-параметры.', 'success' if ok else 'danger')
-        return redirect(request.referrer or url_for('settings_page'))
+        return redirect(request.referrer or url_for('settings_page', tab='hosts'))
 
     # --- Host speedtest run & fetch ---
     @flask_app.route('/admin/hosts/<host_name>/speedtest/run', methods=['POST'])
@@ -1622,15 +1707,32 @@ def create_webhook_app(bot_controller_instance):
     @flask_app.route('/add-host', methods=['POST'])
     @login_required
     def add_host_route():
+        host_name = request.form['host_name']
         create_host(
-            name=request.form['host_name'],
+            name=host_name,
             url=request.form['host_url'],
             user=request.form['host_username'],
             passwd=request.form['host_pass'],
             inbound=int(request.form['host_inbound_id']),
             subscription_url=(request.form.get('host_subscription_url') or '').strip() or None
         )
-        flash(f"Хост '{request.form['host_name']}' успешно добавлен.", 'success')
+        # Опциональные SSH настройки при создании хоста
+        ssh_host = (request.form.get('ssh_host') or '').strip() or None
+        ssh_key_content = (request.form.get('ssh_key_content') or '').strip()
+        if ssh_host or ssh_key_content:
+            ssh_port_raw = (request.form.get('ssh_port') or '').strip()
+            ssh_port = int(ssh_port_raw) if ssh_port_raw and ssh_port_raw.isdigit() else 22
+            ssh_user = (request.form.get('ssh_user') or '').strip() or None
+            ssh_password = request.form.get('ssh_password') or None
+            ssh_key_path = None
+            if ssh_key_content:
+                ssh_key_path = save_host_ssh_key(host_name, ssh_key_content)
+                is_valid, msg = validate_ssh_private_key(ssh_key_content, passphrase=ssh_password)
+                if not is_valid:
+                    flash(f"Предупреждение: {msg}", 'warning')
+            update_host_ssh_settings(host_name, ssh_host=ssh_host, ssh_port=ssh_port,
+                                     ssh_user=ssh_user, ssh_password=ssh_password, ssh_key_path=ssh_key_path)
+        flash(f"Хост '{host_name}' успешно добавлен.", 'success')
         return redirect(url_for('settings_page', tab='hosts'))
 
     @flask_app.route('/delete-host/<host_name>', methods=['POST'])

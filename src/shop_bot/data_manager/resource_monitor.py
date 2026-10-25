@@ -145,13 +145,22 @@ def _ssh_connect(host_row: dict) -> paramiko.SSHClient:
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     pkey = None
-    if ssh_key_path:
-        for KeyClass in (paramiko.RSAKey, paramiko.Ed25519Key):
+    if ssh_key_path and os.path.isfile(ssh_key_path):
+        key_classes = [paramiko.RSAKey, paramiko.Ed25519Key]
+        if hasattr(paramiko, 'ECDSAKey'):
+            key_classes.append(paramiko.ECDSAKey)
+        for KeyClass in key_classes:
             try:
-                pkey = KeyClass.from_private_key_file(ssh_key_path)
+                pkey = KeyClass.from_private_key_file(ssh_key_path, password=ssh_password)
                 break
             except Exception:
-                pkey = None
+                pass
+            if ssh_password:
+                try:
+                    pkey = KeyClass.from_private_key_file(ssh_key_path)
+                    break
+                except Exception:
+                    pass
     ssh.connect(ssh_host, port=ssh_port, username=ssh_user, password=ssh_password, pkey=pkey, timeout=20)
     return ssh
 
