@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block title %}Источники трафика — {{ brand_title or 'NEOVPN' }}{% endblock %}
+
+{% block content %}
+<div class="page-header d-print-none mb-4">
+    <div class="row align-items-center">
+        <div class="col">
+            <div class="page-pretitle">Маркетинг и аналитика</div>
+            <h2 class="page-title text-primary d-flex align-items-center gap-2">
+                <i class="ti ti-chart-arrows"></i> Источники трафика (Радар NEOVPN)
+            </h2>
+            <p class="text-secondary mb-0">Сквозная воронка конверсий по входящим диплинкам из внешних каналов и бота-скаута</p>
+        </div>
+        <div class="col-auto ms-auto d-print-none">
+            <div class="btn-list">
+                <a href="{{ url_for('dashboard_page') }}" class="btn btn-outline-secondary">
+                    <i class="ti ti-arrow-left me-1"></i> На главную
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Сводные показатели воронки -->
+<div class="row row-deck row-cards mb-4">
+    <div class="col-sm-6 col-lg-3">
+        <div class="card card-sm">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-auto">
+                        <span class="bg-primary text-white avatar">
+                            <i class="ti ti-click fs-2"></i>
+                        </span>
+                    </div>
+                    <div class="col">
+                        <div class="font-weight-medium text-secondary">Всего переходов</div>
+                        <div class="text-reset fs-2 font-weight-bold">{{ total_clicks }}</div>
+                        <div class="text-muted small">Клики по /start &lt;tag&gt;</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-lg-3">
+        <div class="card card-sm">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-auto">
+                        <span class="bg-teal text-white avatar">
+                            <i class="ti ti-gift fs-2"></i>
+                        </span>
+                    </div>
+                    <div class="col">
+                        <div class="font-weight-medium text-secondary">Активаций триала</div>
+                        <div class="text-reset fs-2 font-weight-bold">{{ total_trials }}</div>
+                        <div class="text-teal small font-weight-medium">CR: {{ cr_trial }}% от кликов</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-lg-3">
+        <div class="card card-sm">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-auto">
+                        <span class="bg-green text-white avatar">
+                            <i class="ti ti-shopping-cart fs-2"></i>
+                        </span>
+                    </div>
+                    <div class="col">
+                        <div class="font-weight-medium text-secondary">Оплаченных заказов</div>
+                        <div class="text-reset fs-2 font-weight-bold">{{ total_sales }}</div>
+                        <div class="text-green small font-weight-medium">CR: {{ cr_sale }}% из триала</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-lg-3">
+        <div class="card card-sm">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-auto">
+                        <span class="bg-yellow text-white avatar">
+                            <i class="ti ti-currency-ruble fs-2"></i>
+                        </span>
+                    </div>
+                    <div class="col">
+                        <div class="font-weight-medium text-secondary">Общая выручка</div>
+                        <div class="text-reset fs-2 font-weight-bold">{{ "%.2f"|format(total_income) }} ₽</div>
+                        <div class="text-muted small">
+                            {% if total_sales > 0 %}
+                            Ср. чек: {{ "%.0f"|format(total_income / total_sales) }} ₽
+                            {% else %}
+                            Ср. чек: 0 ₽
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Таблица источников -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h3 class="card-title">
+            <i class="ti ti-table me-2 text-primary"></i>Детализация по маркетинговым меткам
+        </h3>
+        <span class="badge bg-purple-lt">Кампаний: {{ traffic_stats|length }}</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-vcenter table-hover card-table">
+            <thead>
+                <tr>
+                    <th>Метка (Payload)</th>
+                    <th>Сегмент спроса</th>
+                    <th class="text-center">Переходы</th>
+                    <th class="text-center">Триалы</th>
+                    <th class="text-center">CR в тест</th>
+                    <th class="text-center">Продажи</th>
+                    <th class="text-center">CR в оплату</th>
+                    <th class="text-end">Выручка</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if traffic_stats %}
+                    {% for item in traffic_stats %}
+                        {% set clicks = item.clicks_count or 0 %}
+                        {% set trials = item.trials_count or 0 %}
+                        {% set sales = item.sales_count or 0 %}
+                        {% set income = item.total_income or 0.0 %}
+                        {% set tag = item.source_tag %}
+                        {% set cr_t = ((trials / clicks * 100)|round(1)) if clicks > 0 else 0 %}
+                        {% set cr_s = ((sales / trials * 100)|round(1)) if trials > 0 else 0 %}
+                        <tr>
+                            <td>
+                                <code class="fw-bold fs-3 text-primary">{{ tag }}</code>
+                            </td>
+                            <td>
+                                {% if tag == 'ref_yt' %}
+                                    <span class="badge bg-danger-lt"><i class="ti ti-brand-youtube me-1"></i> YouTube 4K / Smart TV</span>
+                                {% elif tag == 'ref_ds' %}
+                                    <span class="badge bg-indigo-lt"><i class="ti ti-brand-discord me-1"></i> Discord UDP / Voice</span>
+                                {% elif tag == 'ref_rkn' %}
+                                    <span class="badge bg-teal-lt"><i class="ti ti-shield-lock me-1"></i> ТСПУ / Блокировки VPN</span>
+                                {% elif tag == 'ref_mob' %}
+                                    <span class="badge bg-blue-lt"><i class="ti ti-device-mobile me-1"></i> Мобильные iOS/Android</span>
+                                {% elif tag in ['ref_promo', 'ub_bio'] %}
+                                    <span class="badge bg-green-lt"><i class="ti ti-user-check me-1"></i> Органика / Юзербот-скаут</span>
+                                {% else %}
+                                    <span class="badge bg-secondary-lt"><i class="ti ti-tag me-1"></i> Пользовательская метка</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center font-weight-medium">
+                                <span class="badge bg-azure-lt fs-3">{{ clicks }}</span>
+                            </td>
+                            <td class="text-center font-weight-medium">
+                                <span class="badge bg-teal-lt fs-3">{{ trials }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge {{ 'bg-teal' if cr_t >= 40 else 'bg-secondary-lt' }}">{{ cr_t }}%</span>
+                            </td>
+                            <td class="text-center font-weight-medium">
+                                <span class="badge bg-green-lt fs-3">{{ sales }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge {{ 'bg-green' if cr_s >= 20 else 'bg-secondary-lt' }}">{{ cr_s }}%</span>
+                            </td>
+                            <td class="text-end font-weight-bold text-success fs-3">
+                                {{ "%.2f"|format(income) }} ₽
+                            </td>
+                        </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="8" class="text-center text-secondary py-4">
+                            <i class="ti ti-info-circle fs-2 mb-2 d-block text-muted"></i>
+                            Статистика трафика пока пуста. Данные появятся автоматически при переходе пользователей по диплинкам Радара.
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Справка интеграции экосистемы -->
+<div class="card bg-surface">
+    <div class="card-body">
+        <h4 class="card-title text-primary d-flex align-items-center gap-2">
+            <i class="ti ti-radar"></i> Архитектура сквозной атрибуции Радара NEOVPN
+        </h4>
+        <div class="text-secondary small">
+            <p class="mb-2">
+                Внешний лидогенератор <code>neovpn-promoter</code> перенаправляет целевой трафик в основного бота по ссылке:
+                <code class="text-primary ms-1">https://t.me/neovpn_servers_bot?start=&lt;payload&gt;</code>
+            </p>
+            <ul class="mb-0 ps-3">
+                <li><code>ref_yt</code> — персонализированный AI-онбординг под решение буферизации YouTube 4K.</li>
+                <li><code>ref_ds</code> — онбординг под фикс Discord голосовых каналов и UDP пакетов.</li>
+                <li><code>ref_rkn</code> — позиционирование VLESS Reality как обхода блокировок ТСПУ и протоколов WireGuard/Outline.</li>
+                <li><code>ref_mob</code> — акцент на приложениях v2rayNG (Android), FoXray / Streisand (iOS) и энергоэффективности.</li>
+                <li><code>ref_promo</code> / <code>ub_bio</code> — переход из описания профиля юзербота <code>@neovpn_get_support</code>.</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}

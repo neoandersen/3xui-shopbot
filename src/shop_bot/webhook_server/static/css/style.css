@@ -246,58 +246,112 @@
 .btn-glass.btn-danger { color: var(--danger-color) !important; background: color-mix(in oklab, var(--danger-color) 14%, transparent) !important; border-color: color-mix(in oklab, var(--danger-color) 60%, black) !important; }
 .btn-glass.btn-danger:hover { background: color-mix(in oklab, var(--danger-color) 22%, transparent) !important; }
 :root {
-	/* Брендовые переменные проекта */
-	--primary-color: #ae3ec9; /* grape */
-	--success-color: #51cf66;
-	--danger-color: #ff6b6b;
-	--warning-color: #ff922b;
+	/* 3X-UI Brand Theme Variables */
+	--primary-color: #1677ff; /* 3X-UI electric blue */
+	--primary-hover: #4096ff;
+	--primary-active: #0958d9;
+	--success-color: #52c41a;
+	--danger-color: #ff4d4f;
+	--warning-color: #faad14;
 
-	/* Базовые цвета (по умолчанию тёмная тема) */
-	--bg-page: #0f1115;
-	--bg-surface: #1b1f24;
-	--bg-card: #23272c;
-	--text-primary: #e9ecef;
-	--text-muted: #adb5bd;
-	--border-color: rgba(255, 255, 255, 0.08);
+	/* Базовые цвета 3X-UI (по умолчанию тёмная тема) */
+	--bg-page: #0b0e14;
+	--bg-surface: #101521;
+	--bg-card: #131926;
+	--text-primary: #f0f4f8;
+	--text-muted: #8c9ba5;
+	--border-color: #1d2538;
 
-	/* Переопределение переменных Tabler/Bootstrap под бренд */
-	--tblr-primary: var(--primary-color);
-	--bs-primary: var(--primary-color);
+	/* Переопределение переменных Tabler/Bootstrap под 3X-UI */
+	--tblr-primary: #1677ff;
+	--bs-primary: #1677ff;
+
+	/* 3X-UI токены */
+	--xui-bg-body: #0b0e14;
+	--xui-bg-sidebar: #0e121b;
+	--xui-bg-topbar: #0e121b;
+	--xui-bg-card: #131926;
+	--xui-bg-surface: #101521;
+	--xui-bg-input: #151b29;
+	--xui-border: #1d2538;
+	--xui-border-light: rgba(255, 255, 255, 0.08);
+	--xui-text-primary: #f0f4f8;
+	--xui-text-secondary: #8c9ba5;
+	--xui-text-muted: #5c6875;
+	--xui-primary: #1677ff;
+	--xui-primary-hover: #4096ff;
+	--xui-primary-active: #0958d9;
+	--xui-primary-bg: rgba(22, 119, 255, 0.14);
+	--xui-primary-border: rgba(22, 119, 255, 0.35);
+	--xui-primary-glow: rgba(22, 119, 255, 0.28);
 
 	/* Масштаб интерфейса */
-	--ui-font-scale: 0.97; /* чуть меньше общая типографика */
-	--ui-radius: 12px;
+	--ui-font-scale: 0.95;
+	--ui-radius: 10px;
 }
 
-/* Светлая тема */
+/* Светлая тема 3X-UI */
 [data-bs-theme='light'] {
-	--bg-page: #f6f8fb;
+	--bg-page: #f5f7fa;
 	--bg-surface: #ffffff;
 	--bg-card: #ffffff;
-	--text-primary: #212529;
-	--text-muted: #5f6b7a;
-	--border-color: rgba(0, 0, 0, 0.08);
-	--tblr-primary: var(--primary-color);
-	--bs-primary: var(--primary-color);
-    --accent-1: color-mix(in oklab, var(--primary-color) 16%, transparent);
-    --accent-2: color-mix(in oklab, #3e8cc9 12%, transparent);
-    --accent-3: color-mix(in oklab, #3ec996 10%, transparent);
+	--text-primary: #1e293b;
+	--text-muted: #64748b;
+	--border-color: #e2e8f0;
+	--tblr-primary: #1677ff;
+	--bs-primary: #1677ff;
+	--xui-bg-body: #f5f7fa;
+	--xui-bg-sidebar: #ffffff;
+	--xui-bg-topbar: #ffffff;
+	--xui-bg-card: #ffffff;
+	--xui-bg-surface: #ffffff;
+	--xui-bg-input: #f1f5f9;
+	--xui-border: #e2e8f0;
+	--xui-border-light: rgba(0, 0, 0, 0.08);
+	--xui-text-primary: #1e293b;
+	--xui-text-secondary: #64748b;
+	--xui-text-muted: #94a3b8;
+	--xui-primary: #1677ff;
+	--xui-primary-hover: #4096ff;
+	--xui-primary-active: #0958d9;
+	--xui-primary-bg: rgba(22, 119, 255, 0.08);
+	--xui-primary-border: rgba(22, 119, 255, 0.28);
+	--xui-primary-glow: rgba(22, 119, 255, 0.15);
+	--accent-1: color-mix(in oklab, #1677ff 14%, transparent);
+	--accent-2: color-mix(in oklab, #00b4d8 12%, transparent);
+	--accent-3: color-mix(in oklab, #52c41a 10%, transparent);
 }
 
-/* Тёмная тема */
+/* Тёмная тема 3X-UI */
 [data-bs-theme='dark'] {
-	--bg-page: #0f1115;
-	--bg-surface: #1b1f24;
-	--bg-card: #23272c;
-	--text-primary: #e9ecef;
-	--text-muted: #adb5bd;
-	--border-color: rgba(255, 255, 255, 0.08);
-	--tblr-primary: var(--primary-color);
-	--bs-primary: var(--primary-color);
-    /* Акцентные пятна для анимированного фона (тёмная тема) */
-    --accent-1: color-mix(in oklab, var(--primary-color) 18%, transparent);
-    --accent-2: color-mix(in oklab, #3e8cc9 14%, transparent);
-    --accent-3: color-mix(in oklab, #3ec996 12%, transparent);
+	--bg-page: #0b0e14;
+	--bg-surface: #101521;
+	--bg-card: #131926;
+	--text-primary: #f0f4f8;
+	--text-muted: #8c9ba5;
+	--border-color: #1d2538;
+	--tblr-primary: #1677ff;
+	--bs-primary: #1677ff;
+	--xui-bg-body: #0b0e14;
+	--xui-bg-sidebar: #0e121b;
+	--xui-bg-topbar: #0e121b;
+	--xui-bg-card: #131926;
+	--xui-bg-surface: #101521;
+	--xui-bg-input: #151b29;
+	--xui-border: #1d2538;
+	--xui-border-light: rgba(255, 255, 255, 0.08);
+	--xui-text-primary: #f0f4f8;
+	--xui-text-secondary: #8c9ba5;
+	--xui-text-muted: #5c6875;
+	--xui-primary: #1677ff;
+	--xui-primary-hover: #4096ff;
+	--xui-primary-active: #0958d9;
+	--xui-primary-bg: rgba(22, 119, 255, 0.14);
+	--xui-primary-border: rgba(22, 119, 255, 0.35);
+	--xui-primary-glow: rgba(22, 119, 255, 0.28);
+	--accent-1: color-mix(in oklab, #1677ff 18%, transparent);
+	--accent-2: color-mix(in oklab, #00b4d8 14%, transparent);
+	--accent-3: color-mix(in oklab, #52c41a 12%, transparent);
 }
 
 * {
@@ -2137,4 +2191,494 @@ body.login-page {
   .settings-column-right form { padding-bottom: 72px; }
   #content .card > .mb-3 { padding: 0 12px; }
   #content .card > .row { padding: 0 8px; }
+}
+
+/* ==========================================================================
+   3X-UI Modern Sidebar Layout & Components
+   ========================================================================== */
+
+/* Layout wrapper */
+.xui-layout {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  position: relative;
+  background: var(--bg-page);
+}
+
+/* Sidebar */
+.xui-sidebar {
+  width: 250px;
+  min-width: 250px;
+  max-width: 250px;
+  height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 1050;
+  display: flex;
+  flex-direction: column;
+  background: var(--xui-bg-sidebar);
+  border-right: 1px solid var(--xui-border);
+  padding: 16px 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-shadow: 2px 0 16px rgba(0, 0, 0, 0.18);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.xui-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+.xui-sidebar::-webkit-scrollbar-thumb {
+  background: var(--xui-border);
+  border-radius: 4px;
+}
+
+/* Sidebar header & brand */
+.xui-sidebar-header {
+  padding-bottom: 12px;
+  margin-bottom: 8px;
+}
+
+.xui-brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 2px 4px;
+}
+
+.xui-brand-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  font-weight: 800;
+  font-size: 1.25rem;
+  letter-spacing: 0.5px;
+  color: #fff;
+  line-height: 1;
+}
+
+.xui-brand-text {
+  background: linear-gradient(135deg, #ffffff 40%, #1677ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 900;
+  font-size: 1.28rem;
+  letter-spacing: 0.8px;
+}
+
+.xui-brand-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.xui-icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--xui-text-secondary);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.xui-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+  border-color: var(--xui-border);
+}
+
+/* 3X-UI Quick Search input */
+.xui-search-wrapper {
+  position: relative;
+  margin-bottom: 12px;
+}
+
+.xui-search-input {
+  width: 100%;
+  height: 34px;
+  padding: 6px 58px 6px 30px;
+  background: var(--xui-bg-input);
+  border: 1px solid var(--xui-border);
+  border-radius: 8px;
+  font-size: 0.84rem;
+  color: var(--xui-text-primary);
+  transition: all 0.2s ease;
+}
+
+.xui-search-input::placeholder {
+  color: var(--xui-text-muted);
+  opacity: 0.8;
+}
+
+.xui-search-input:focus {
+  outline: none;
+  border-color: var(--xui-primary);
+  box-shadow: 0 0 0 2px var(--xui-primary-border);
+  background: color-mix(in oklab, var(--xui-bg-input) 80%, #1677ff 20%);
+}
+
+.xui-search-icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.9rem;
+  color: var(--xui-text-muted);
+  pointer-events: none;
+}
+
+.xui-kbd-badge {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 2px 5px;
+  background: color-mix(in oklab, var(--xui-bg-card) 85%, #fff 15%);
+  border: 1px solid var(--xui-border);
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--xui-text-muted);
+  pointer-events: none;
+  line-height: 1.1;
+}
+
+/* 3X-UI Navigation Items */
+.xui-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
+}
+
+.xui-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--xui-text-secondary);
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: all 0.16s ease;
+  line-height: 1.3;
+}
+
+.xui-nav-item i {
+  font-size: 1.15rem;
+  width: 20px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--xui-text-muted);
+  transition: color 0.16s ease;
+}
+
+.xui-nav-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #f1f5f9;
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.xui-nav-item:hover i {
+  color: var(--xui-primary-hover);
+}
+
+/* Active Navigation Item (3X-UI glow highlight) */
+.xui-nav-item.active {
+  background: var(--xui-primary-bg);
+  border-color: var(--xui-primary-border);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 10px var(--xui-primary-glow);
+}
+
+.xui-nav-item.active i {
+  color: var(--xui-primary-hover);
+}
+
+/* Open tickets badge in nav */
+.xui-nav-item .open-tickets-badge {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Sidebar footer */
+.xui-sidebar-footer {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--xui-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.xui-logout-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  color: var(--xui-text-secondary);
+}
+
+.xui-logout-btn:hover {
+  background: var(--xui-danger-bg);
+  color: #ff7875;
+  border-color: rgba(255, 77, 79, 0.25);
+}
+
+.xui-logout-btn:hover i {
+  color: #ff7875;
+}
+
+.xui-version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.76rem;
+  color: var(--xui-text-muted);
+  padding: 4px 6px;
+}
+
+.xui-version-link {
+  color: var(--xui-text-muted);
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.xui-version-link:hover {
+  color: #fff;
+}
+
+.xui-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: var(--xui-text-muted);
+}
+
+/* Main Area */
+.xui-main {
+  margin-left: 250px;
+  width: calc(100% - 250px);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-x: hidden;
+  background: var(--bg-page);
+  position: relative;
+}
+
+/* Topbar */
+.xui-topbar {
+  height: 54px;
+  padding: 0 24px;
+  background: var(--xui-bg-topbar);
+  border-bottom: 1px solid var(--xui-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 900;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.xui-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.xui-burger-btn {
+  background: transparent;
+  border: 1px solid var(--xui-border);
+  color: #fff;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.xui-burger-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--xui-primary);
+}
+
+.xui-page-breadcrumb {
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  color: var(--xui-text-primary);
+}
+
+.xui-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.xui-bot-status-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.xui-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid var(--xui-border);
+  background: var(--xui-bg-card);
+  color: var(--xui-text-primary);
+}
+
+.xui-pill-btn {
+  border-radius: 999px !important;
+  padding: 3px 12px !important;
+  font-size: 0.8rem !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+}
+
+.xui-topbar-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--xui-border);
+}
+
+.xui-admin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--xui-bg-input);
+  border: 1px solid var(--xui-border);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--xui-text-primary);
+}
+
+.xui-admin-badge i {
+  font-size: 1.05rem;
+}
+
+.xui-topbar-logout {
+  padding: 3px 10px;
+  font-size: 0.8rem;
+  color: var(--xui-text-muted);
+}
+.xui-topbar-logout:hover {
+  color: #ff7875;
+  background: var(--xui-danger-bg);
+}
+
+/* Content wrapper */
+.xui-content {
+  flex: 1 0 auto;
+  padding: 22px 26px;
+  width: 100%;
+  max-width: 1720px;
+  margin: 0 auto;
+  overflow-x: hidden;
+  min-width: 0;
+}
+
+/* Card adjustments for 3X-UI Look */
+.card {
+  background: var(--xui-bg-card);
+  border: 1px solid var(--xui-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.card-header {
+  background: transparent;
+  border-bottom: 1px solid var(--xui-border);
+  padding: 14px 18px;
+}
+
+.card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--xui-text-primary);
+}
+
+/* Mobile Drawer Responsive Media Queries */
+@media (max-width: 992px) {
+  .xui-sidebar {
+    transform: translateX(-100%);
+    box-shadow: none;
+  }
+  .xui-sidebar.show {
+    transform: translateX(0);
+    box-shadow: 6px 0 28px rgba(0, 0, 0, 0.65);
+  }
+  .xui-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    z-index: 1040;
+    display: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  .xui-backdrop.show {
+    display: block;
+    opacity: 1;
+  }
+  .xui-main {
+    margin-left: 0;
+    width: 100%;
+  }
+  .xui-content {
+    padding: 14px;
+  }
+  .xui-topbar {
+    padding: 0 14px;
+  }
+}
+
+@media (max-width: 576px) {
+  .xui-status-label {
+    display: none;
+  }
+  .xui-admin-name {
+    max-width: 75px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }

@@ -1,16 +1,16 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ru" data-bs-theme="dark">
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>{% block title %}Панель управления Ботом{% endblock %}</title>
+		<title>{% block title %}NEOVPN — Панель управления 3X-UI{% endblock %}</title>
 		<link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='img/favicon-32x32.png') }}" />
 		<link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='img/favicon-16x16.png') }}" />
 		<link rel="shortcut icon" href="{{ url_for('static', filename='img/favicon-32x32.png') }}" />
 		<link rel="icon" href="{{ url_for('static', filename='img/safari-pinned-tab.svg') }}" type="image/svg+xml" />
-		<link rel="mask-icon" href="{{ url_for('static', filename='img/safari-pinned-tab.svg') }}" color="#ae3ec9" />
+		<link rel="mask-icon" href="{{ url_for('static', filename='img/safari-pinned-tab.svg') }}" color="#1677ff" />
 		<link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='img/apple-touch-icon.png') }}" />
-		<meta name="theme-color" content="#ae3ec9" />
+		<meta name="theme-color" content="#0b0e14" />
 		<meta name="csrf-token" content="{{ csrf_token() }}" />
 		<!-- Tabler CSS (Bootstrap 5-based) -->
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css" />
@@ -19,7 +19,7 @@
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler-vendors.min.css" />
 		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
 
-		<!-- Project custom styles -->
+		<!-- Project custom styles (3X-UI modern theme) -->
 		<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 
 		<!-- Charts -->
@@ -27,186 +27,340 @@
         <!-- Optional: zoom/pan plugin for Chart.js -->
         <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.umd.min.js"></script>
 	</head>
-	<body data-page="{{ request.endpoint }}" class="layout-boxed">
-		<div class="container">
-			<header class="main-header">
-				<div class="brand">
-					<a href="{{ url_for('dashboard_page') }}" class="brand-link">
-						<img src="{{ url_for('static', filename='img/logo.png') }}" alt="Логотип" />
-						<span id="brand-title" class="ms-2">{{ brand_title or 'T‑Shift VPN' }}</span>
-					</a>
-					<button type="button" id="brand-edit" class="btn btn-outline-secondary btn-sm btn-glass" title="Сменить название">✏️</button>
+	<body data-page="{{ request.endpoint }}">
+		<div class="xui-layout">
+			<!-- Сайдбар 3X-UI (левая колонка ~250px) -->
+			<aside class="xui-sidebar" id="app-sidebar">
+				<div class="xui-sidebar-header">
+					<div class="xui-brand-row">
+						<a href="{{ url_for('dashboard_page') }}" class="xui-brand-title">
+							<span class="xui-brand-text" id="brand-title">{{ brand_title or 'NEOVPN' }}</span>
+						</a>
+						<div class="xui-brand-actions">
+							<button type="button" id="brand-edit" class="xui-icon-btn" title="Сменить название">
+								<i class="ti ti-pencil"></i>
+							</button>
+							<a href="https://github.com/neoandersen/3xui-shopbot" target="_blank" class="xui-icon-btn" title="GitHub Репозиторий">
+								<i class="ti ti-star"></i>
+							</a>
+							<button type="button" id="theme-toggle" class="xui-icon-btn theme-toggle-btn" title="Переключить тему">
+								<i class="ti ti-moon" id="theme-icon"></i>
+								<span class="theme-label d-none">Тёмная</span>
+							</button>
+						</div>
+					</div>
+
+					<!-- Строка быстрого поиска 3X-UI: Поиск... Ctrl K -->
+					<div class="xui-search-wrapper">
+						<i class="ti ti-search xui-search-icon"></i>
+						<input type="text" id="xui-nav-search" class="xui-search-input" placeholder="Поиск..." autocomplete="off" />
+						<span class="xui-kbd-badge">Ctrl K</span>
+					</div>
 				</div>
-				<nav class="navigation justify-content-center">
-					<a href="{{ url_for('dashboard_page') }}" class="nav-link {% if request.endpoint == 'dashboard_page' %}active{% endif %}">Главная</a>
-					<a href="{{ url_for('users_page') }}" class="nav-link {% if request.endpoint == 'users_page' %}active{% endif %}">Пользователи</a>
-					<a href="{{ url_for('admin_keys_page') }}" class="nav-link {% if request.endpoint == 'admin_keys_page' %}active{% endif %}">Ключи</a>
-					<a href="{{ url_for('support_list_page') }}" class="nav-link {% if request.endpoint in ['support_list_page', 'support_ticket_page'] %}active{% endif %}">
-						Поддержка
-						<span class="open-tickets-badge" data-fetch-url="{{ url_for('support_open_count_partial') }}" data-fetch-interval="10000">
+
+				<!-- Список пунктов меню -->
+				<nav class="xui-nav" id="xui-nav-menu">
+					<a href="{{ url_for('dashboard_page') }}" class="xui-nav-item {% if request.endpoint == 'dashboard_page' %}active{% endif %}" data-nav-text="главная дашборд dashboard">
+						<i class="ti ti-gauge"></i>
+						<span>Дашборд</span>
+					</a>
+					<a href="{{ url_for('users_page') }}" class="xui-nav-item {% if request.endpoint == 'users_page' %}active{% endif %}" data-nav-text="пользователи клиенты users">
+						<i class="ti ti-users"></i>
+						<span>Пользователи</span>
+					</a>
+					<a href="{{ url_for('admin_keys_page') }}" class="xui-nav-item {% if request.endpoint == 'admin_keys_page' %}active{% endif %}" data-nav-text="ключи входящие vless keys">
+						<i class="ti ti-key"></i>
+						<span>Ключи</span>
+					</a>
+					<a href="{{ url_for('traffic_stats_page') }}" class="xui-nav-item {% if request.endpoint == 'traffic_stats_page' %}active{% endif %}" data-nav-text="источники трафика радар аналитика конверсии radar traffic">
+						<i class="ti ti-radar"></i>
+						<span>Источники трафика</span>
+						<span class="badge bg-blue-lt ms-auto fs-5">Радар</span>
+					</a>
+					<a href="{{ url_for('support_list_page') }}" class="xui-nav-item {% if request.endpoint in ['support_list_page', 'support_ticket_page'] %}active{% endif %}" data-nav-text="поддержка тикеты сообщения support">
+						<i class="ti ti-headset"></i>
+						<span>Поддержка</span>
+						<span class="open-tickets-badge ms-auto" data-fetch-url="{{ url_for('support_open_count_partial') }}" data-fetch-interval="10000">
 							{% if open_tickets_count and open_tickets_count > 0 %}
-							<span class="badge bg-green-lt" title="Открытые тикеты">
-								<span class="status-dot status-dot-animated bg-green"></span>{{ open_tickets_count }}
+							<span class="badge bg-green" title="Открытые тикеты">
+								<span class="status-dot status-dot-animated bg-white"></span>{{ open_tickets_count }}
 							</span>
 							{% endif %}
 						</span>
 					</a>
-					<a href="{{ url_for('monitor_page') }}" class="nav-link {% if request.endpoint == 'monitor_page' %}active{% endif %}">Монитор</a>
-					<a href="{{ url_for('button_constructor_page') }}" class="nav-link {% if request.endpoint == 'button_constructor_page' %}active{% endif %}">Конструктор</a>
-					<a href="{{ url_for('settings_page') }}" class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}">Настройки</a>
+					<a href="{{ url_for('monitor_page') }}" class="xui-nav-item {% if request.endpoint == 'monitor_page' %}active{% endif %}" data-nav-text="монитор узлы сервера ресурсы speedtest monitor">
+						<i class="ti ti-activity"></i>
+						<span>Монитор</span>
+					</a>
+					<a href="{{ url_for('button_constructor_page') }}" class="xui-nav-item {% if request.endpoint == 'button_constructor_page' %}active{% endif %}" data-nav-text="конструктор кнопок меню bot buttons">
+						<i class="ti ti-puzzle"></i>
+						<span>Конструктор</span>
+					</a>
+					<a href="{{ url_for('settings_page') }}" class="xui-nav-item {% if request.endpoint == 'settings_page' %}active{% endif %}" data-nav-text="настройки конфигурация settings config">
+						<i class="ti ti-settings"></i>
+						<span>Настройки</span>
+					</a>
 				</nav>
-				<div class="bm float-end">
-					<input id="burger" type="checkbox" />
-					<label for="burger" class="burger_img"></label>
-					<nav class="burger-menu">
-						<ul>
-							<li><a href="{{ url_for('dashboard_page') }}">Главная</a></li>
-							<li><a href="{{ url_for('users_page') }}">Пользователи</a></li>
-							<li><a href="{{ url_for('admin_keys_page') }}">Ключи</a></li>
-							<li><a href="{{ url_for('support_list_page') }}">Поддержка</a></li>
-							<li><a href="{{ url_for('monitor_page') }}">Монитор</a></li>
-							<li><a href="{{ url_for('button_constructor_page') }}">Конструктор</a></li>
-							<li><a href="{{ url_for('settings_page') }}">Настройки</a></li>
-						</ul>
-					</nav>
-				</div>
-				<div class="header-controls">
-					<div class="bot-control">
-						{% if bot_status.is_running %}
-						<p class="status-running"><span class="status-dot status-dot-animated bg-green"></span>Статус: <strong>Запущен</strong></p>
-						<form action="{{ url_for('stop_both_bots_route') }}" method="post">
-							<button type="submit" class="btn btn-danger btn-sm">
-								Остановить
-							</button>
-						</form>
-						{% else %}
-						<p class="status-stopped"><span class="status-dot"></span>Статус: <strong>Остановлен</strong></p>
-						{% if all_settings_ok and support_settings_ok %}
-						<form action="{{ url_for('start_both_bots_route') }}" method="post">
-							<button type="submit" class="btn btn-success btn-sm">
-								Запустить
-							</button>
-						</form>
-						{% else %}
-						<button class="btn btn-secondary btn-sm" disabled>
-							Запустить
-						</button>
-						{% endif %} {% endif %}
-					</div>
 
-					<div class="user-session-controls">
-						<span>Вы вошли в систему.</span>
-						<form action="{{ url_for('logout_page') }}" method="post" style="display: inline">
-							<button type="submit" class="btn btn-outline-secondary">Выйти</button>
-						</form>
-						<button type="button" id="theme-toggle" class="btn btn-outline-primary ms-2" title="Переключить тему">
-							<span class="theme-label">Тёмная</span>
+				<!-- Нижний блок сайдбара: Выход и Версия -->
+				<div class="xui-sidebar-footer">
+					<form action="{{ url_for('logout_page') }}" method="post" class="w-100">
+						<input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+						<button type="submit" class="xui-nav-item xui-logout-btn w-100 text-start">
+							<i class="ti ti-logout"></i>
+							<span>Выход</span>
 						</button>
+					</form>
+					<div class="xui-version-row">
+						<a href="https://github.com/neoandersen/3xui-shopbot" target="_blank" class="xui-version-link">
+							<i class="ti ti-brand-github"></i>
+							<span>v1.3.0</span>
+						</a>
+						<span class="xui-status-pill"><span class="status-dot bg-green"></span> 3X-UI Shopbot</span>
 					</div>
 				</div>
-			</header>
+			</aside>
 
-			<!-- Toast container -->
-			<div id="toast-container" class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1080;"></div>
-			{% with messages = get_flashed_messages(with_categories=true) %}
-				{% if messages %}
-					<script id="flash-messages" type="application/json">{{ messages|tojson }}</script>
-					<script>
-						(function(){
-							const cont = document.getElementById('toast-container');
-							const dataTag = document.getElementById('flash-messages');
-							if (!cont || !dataTag) return;
-							let items = [];
-							try { items = JSON.parse(dataTag.textContent || '[]'); } catch(_){ items = []; }
+			<!-- Backdrop для мобильных устройств -->
+			<div class="xui-backdrop" id="sidebar-backdrop"></div>
 
-							function renderToasts(){
-								items.forEach(function(item){
-									const category = item[0] || 'secondary';
-									const message = item[1] || '';
-									const el = document.createElement('div');
-									el.className = 'toast fade align-items-center text-bg-' + (category === 'danger' ? 'danger' : (category === 'success' ? 'success' : (category === 'warning' ? 'warning' : 'secondary')));
-									el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
-									el.innerHTML = '<div class="d-flex"><div class="toast-body">'+ message +'</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button></div>';
-									cont.appendChild(el);
-								});
-								// Если bootstrap уже загружен — показываем сразу, иначе дождёмся события load
-								function showNow(){
-									try {
-										cont.querySelectorAll('.toast').forEach(el => new bootstrap.Toast(el, { delay: 4000, autohide: true }).show());
-									} catch(_) {}
+			<!-- Основная область приложения -->
+			<div class="xui-main">
+				<!-- Верхний бар (Topbar 3X-UI) -->
+				<header class="xui-topbar">
+					<div class="xui-topbar-left">
+						<button type="button" class="xui-burger-btn d-lg-none" id="sidebar-toggle" aria-label="Открыть меню">
+							<i class="ti ti-menu-2"></i>
+						</button>
+						<div class="xui-page-breadcrumb">
+							{% if request.endpoint == 'dashboard_page' %}
+								<i class="ti ti-gauge text-primary me-1"></i> <span class="fw-bold">Дашборд</span>
+							{% elif request.endpoint == 'users_page' %}
+								<i class="ti ti-users text-primary me-1"></i> <span class="fw-bold">Пользователи</span>
+							{% elif request.endpoint == 'admin_keys_page' %}
+								<i class="ti ti-key text-primary me-1"></i> <span class="fw-bold">Ключи доступа</span>
+							{% elif request.endpoint == 'traffic_stats_page' %}
+								<i class="ti ti-radar text-primary me-1"></i> <span class="fw-bold">Источники трафика</span>
+							{% elif request.endpoint in ['support_list_page', 'support_ticket_page'] %}
+								<i class="ti ti-headset text-primary me-1"></i> <span class="fw-bold">Служба поддержки</span>
+							{% elif request.endpoint == 'monitor_page' %}
+								<i class="ti ti-activity text-primary me-1"></i> <span class="fw-bold">Монитор серверов</span>
+							{% elif request.endpoint == 'button_constructor_page' %}
+								<i class="ti ti-puzzle text-primary me-1"></i> <span class="fw-bold">Конструктор меню</span>
+							{% elif request.endpoint == 'settings_page' %}
+								<i class="ti ti-settings text-primary me-1"></i> <span class="fw-bold">Настройки системы</span>
+							{% else %}
+								<span class="fw-bold">Панель управления</span>
+							{% endif %}
+						</div>
+					</div>
+
+					<div class="xui-topbar-right">
+						<!-- Статус бота (кнопки в стиле 3x-ui Topbar) -->
+						<div class="xui-bot-status-group">
+							{% if bot_status.is_running %}
+								<span class="xui-status-tag status-running">
+									<span class="status-dot status-dot-animated bg-green"></span>
+									<span class="xui-status-label">Запущен</span>
+								</span>
+								<form action="{{ url_for('stop_both_bots_route') }}" method="post" style="display:inline;">
+									<input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+									<button type="submit" class="btn btn-outline-danger btn-sm xui-pill-btn">
+										<i class="ti ti-power me-1"></i>Стоп
+									</button>
+								</form>
+							{% else %}
+								<span class="xui-status-tag status-stopped">
+									<span class="status-dot bg-red"></span>
+									<span class="xui-status-label">Остановлен</span>
+								</span>
+								{% if all_settings_ok and support_settings_ok %}
+								<form action="{{ url_for('start_both_bots_route') }}" method="post" style="display:inline;">
+									<input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+									<button type="submit" class="btn btn-outline-primary btn-sm xui-pill-btn">
+										<i class="ti ti-player-play me-1"></i>Перезапуск
+									</button>
+								</form>
+								{% else %}
+								<button class="btn btn-outline-secondary btn-sm xui-pill-btn" disabled title="Заполните настройки">
+									<i class="ti ti-player-play me-1"></i>Запуск
+								</button>
+								{% endif %}
+							{% endif %}
+						</div>
+
+						<div class="xui-topbar-sep"></div>
+
+						<!-- Профиль текущего администратора -->
+						<div class="xui-admin-badge" title="Текущая сессия">
+							<i class="ti ti-user-circle text-primary"></i>
+							<span class="xui-admin-name">{{ admin_username or 'Admin' }}</span>
+						</div>
+
+						<!-- Кнопка Выйти в шапке -->
+						<form action="{{ url_for('logout_page') }}" method="post" style="display:inline;">
+							<input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+							<button type="submit" class="btn btn-ghost-secondary btn-sm xui-topbar-logout" title="Выйти из системы">
+								<i class="ti ti-logout me-1"></i>Выйти
+							</button>
+						</form>
+					</div>
+				</header>
+
+				<!-- Toast container -->
+				<div id="toast-container" class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1080;"></div>
+				{% with messages = get_flashed_messages(with_categories=true) %}
+					{% if messages %}
+						<script id="flash-messages" type="application/json">{{ messages|tojson }}</script>
+						<script>
+							(function(){
+								const cont = document.getElementById('toast-container');
+								const dataTag = document.getElementById('flash-messages');
+								if (!cont || !dataTag) return;
+								let items = [];
+								try { items = JSON.parse(dataTag.textContent || '[]'); } catch(_){ items = []; }
+
+								function renderToasts(){
+									items.forEach(function(item){
+										const category = item[0] || 'secondary';
+										const message = item[1] || '';
+										const el = document.createElement('div');
+										el.className = 'toast fade align-items-center text-bg-' + (category === 'danger' ? 'danger' : (category === 'success' ? 'success' : (category === 'warning' ? 'warning' : 'secondary')));
+										el.setAttribute('role','alert'); el.setAttribute('aria-live','assertive'); el.setAttribute('aria-atomic','true');
+										el.innerHTML = '<div class="d-flex"><div class="toast-body">'+ message +'</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button></div>';
+										cont.appendChild(el);
+									});
+									function showNow(){
+										try {
+											cont.querySelectorAll('.toast').forEach(el => new bootstrap.Toast(el, { delay: 4000, autohide: true }).show());
+										} catch(_) {}
+									}
+									if (window.bootstrap && window.bootstrap.Toast) {
+										showNow();
+									} else {
+										window.addEventListener('load', showNow, { once: true });
+									}
 								}
-								if (window.bootstrap && window.bootstrap.Toast) {
-									showNow();
-								} else {
-									window.addEventListener('load', showNow, { once: true });
-								}
-							}
+								renderToasts();
+							})();
+						</script>
+					{% endif %}
+				{% endwith %}
 
-							renderToasts();
-						})();
-					</script>
-				{% endif %}
-			{% endwith %}
-
-			<main>{% block content %}{% endblock %}</main>
+				<!-- Основной рабочий контент -->
+				<main class="xui-content">
+					{% block content %}{% endblock %}
+				</main>
+			</div>
 		</div>
 
-		<footer class="main-footer"></footer>
+		<!-- Modal: смена названия -->
+		<div class="modal modal-blur fade" id="brandModal" tabindex="-1" aria-hidden="true">
+			<div class="modal-dialog modal-dialog-centered">
+				<div class="modal-content">
+					<div class="modal-header">
+						<h5 class="modal-title">Сменить название проекта</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+					</div>
+					<div class="modal-body">
+						<input type="text" class="form-control" id="brand-input" placeholder="Введите название (например, NEOVPN)" />
+						<small class="text-secondary">Название сохранится на сервере и будет отображаться в шапке сайдбара.</small>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+						<button type="button" class="btn btn-primary" id="brand-save">Сохранить</button>
+					</div>
+				</div>
+			</div>
+		</div>
 
-        <!-- Modal: смена названия -->
-        <div class="modal modal-blur fade" id="brandModal" tabindex="-1" aria-hidden="true">
-            <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Сменить название в шапке</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                    </div>
-                    <div class="modal-body">
-                        <input type="text" class="form-control" id="brand-input" placeholder="Введите название" />
-                        <small class="text-secondary">Название сохранится на сервере и будет показано в шапке.</small>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
-                        <button type="button" class="btn btn-primary" id="brand-save">Сохранить</button>
-                    </div>
-                </div>
-            </div>
-        </div>
+		<!-- Tabler Core & Scripts -->
+		<script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/js/tabler.min.js"></script>
+		<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+		<script>
+			// Управление боковой панелью, поиском и сменой названия
+			(function(){
+				// 1. Смена названия
+				const titleEl = document.getElementById('brand-title');
+				const editBtn = document.getElementById('brand-edit');
+				const modalEl = document.getElementById('brandModal');
+				const inputEl = document.getElementById('brand-input');
+				const saveBtn = document.getElementById('brand-save');
+				if (titleEl && editBtn && modalEl) {
+					editBtn.addEventListener('click', () => {
+						try { inputEl.value = titleEl.textContent.trim(); } catch(_){ }
+						const m = new bootstrap.Modal(modalEl); m.show();
+					});
+					async function save(){
+						const val = String(inputEl.value||'').trim();
+						if (!val) { try { window.showToast('warning', 'Введите название'); } catch(_){ } return; }
+						try {
+							const fd = new FormData();
+							fd.append('csrf_token', document.querySelector('meta[name="csrf-token"]').getAttribute('content'));
+							fd.append('title', val);
+							const resp = await fetch('{{ url_for("update_brand_title_route") }}', { method: 'POST', body: fd, credentials: 'same-origin' });
+							if (resp.ok) {
+								titleEl.textContent = val;
+								try { window.showToast('success', 'Название сохранено'); } catch(_){ }
+								bootstrap.Modal.getInstance(modalEl)?.hide();
+							} else {
+								try { window.showToast('danger', 'Не удалось сохранить название'); } catch(_){ }
+							}
+						} catch(_){ try { window.showToast('danger', 'Ошибка сети'); } catch(__){} }
+					}
+					saveBtn.addEventListener('click', save);
+				}
 
-        <!-- Tabler Core -->
-        <script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/js/tabler.min.js"></script>
-        <script src="{{ url_for('static', filename='js/script.js') }}"></script>
-        <script>
-            (function(){
-                const titleEl = document.getElementById('brand-title');
-                const editBtn = document.getElementById('brand-edit');
-                const modalEl = document.getElementById('brandModal');
-                const inputEl = document.getElementById('brand-input');
-                const saveBtn = document.getElementById('brand-save');
-                if (!titleEl || !editBtn || !modalEl) return;
-                editBtn.addEventListener('click', () => {
-                    try { inputEl.value = titleEl.textContent.trim(); } catch(_){ }
-                    const m = new bootstrap.Modal(modalEl); m.show();
-                });
-                async function save(){
-                    const val = String(inputEl.value||'').trim();
-                    if (!val) { try { window.showToast('warning', 'Введите название'); } catch(_){ } return; }
-                    try {
-                        const fd = new FormData();
-                        fd.append('csrf_token', document.querySelector('meta[name="csrf-token"]').getAttribute('content'));
-                        fd.append('title', val);
-                        const resp = await fetch('{{ url_for("update_brand_title_route") }}', { method: 'POST', body: fd, credentials: 'same-origin' });
-                        if (resp.ok) {
-                            titleEl.textContent = val;
-                            try { window.showToast('success', 'Название сохранено'); } catch(_){ }
-                            bootstrap.Modal.getInstance(modalEl)?.hide();
-                        } else {
-                            try { window.showToast('danger', 'Не удалось сохранить название'); } catch(_){ }
-                        }
-                    } catch(_){ try { window.showToast('danger', 'Ошибка сети'); } catch(__){} }
-                }
-                saveBtn.addEventListener('click', save);
-            })();
-        </script>
-    </body>
+				// 2. Мобильный drawer сайдбара
+				const toggleBtn = document.getElementById('sidebar-toggle');
+				const sidebar = document.getElementById('app-sidebar');
+				const backdrop = document.getElementById('sidebar-backdrop');
+				if (toggleBtn && sidebar && backdrop) {
+					function openSidebar() {
+						sidebar.classList.add('show');
+						backdrop.classList.add('show');
+						document.body.style.overflow = 'hidden';
+					}
+					function closeSidebar() {
+						sidebar.classList.remove('show');
+						backdrop.classList.remove('show');
+						document.body.style.overflow = '';
+					}
+					toggleBtn.addEventListener('click', openSidebar);
+					backdrop.addEventListener('click', closeSidebar);
+					// При клике на ссылку в мобильном сайдбаре закрываем
+					sidebar.querySelectorAll('.xui-nav-item').forEach(el => {
+						el.addEventListener('click', () => {
+							if (window.innerWidth <= 992) closeSidebar();
+						});
+					});
+				}
+
+				// 3. Быстрый поиск по меню (Ctrl + K)
+				const searchInput = document.getElementById('xui-nav-search');
+				const navMenu = document.getElementById('xui-nav-menu');
+				if (searchInput && navMenu) {
+					document.addEventListener('keydown', function(e) {
+						if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+							e.preventDefault();
+							searchInput.focus();
+							searchInput.select();
+						}
+					});
+					searchInput.addEventListener('input', function() {
+						const query = searchInput.value.toLowerCase().trim();
+						const items = navMenu.querySelectorAll('.xui-nav-item');
+						items.forEach(item => {
+							const text = (item.getAttribute('data-nav-text') || '') + ' ' + item.textContent.toLowerCase();
+							if (!query || text.includes(query)) {
+								item.style.display = 'flex';
+							} else {
+								item.style.display = 'none';
+							}
+						});
+					});
+				}
+			})();
+		</script>
+	</body>
 </html>

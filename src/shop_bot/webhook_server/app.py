@@ -41,7 +41,7 @@ from shop_bot.data_manager.database import (
     update_host_url, update_host_name, update_host_ssh_settings, get_latest_speedtest, get_speedtests,
     get_all_keys, get_keys_for_user, get_key_by_id, delete_key_by_id, update_key_comment, update_key_info,
     add_new_key, get_balance, adjust_user_balance, get_referrals_for_user,
-    get_user, get_key_by_email, get_host)
+    get_user, get_key_by_email, get_host, get_traffic_sources_stats)
 
 
 _bot_controller = None
@@ -143,6 +143,7 @@ def create_webhook_app(bot_controller_instance):
             if request.form.get('username') == settings.get("panel_login") and \
                request.form.get('password') == settings.get("panel_password"):
                 session['logged_in'] = True
+                session['admin_username'] = request.form.get('username') or 'Admin'
                 # remember-me: делаем сессию постоянной при установленном чекбоксе
                 session.permanent = bool(request.form.get('remember_me'))
                 return redirect(url_for('dashboard_page'))
@@ -173,6 +174,7 @@ def create_webhook_app(bot_controller_instance):
             open_tickets_count = 0
             closed_tickets_count = 0
             all_tickets_count = 0
+        admin_username = session.get('admin_username') or settings.get('panel_login') or 'Admin'
         return {
             "bot_status": bot_status,
             "all_settings_ok": all_settings_ok,
@@ -181,7 +183,8 @@ def create_webhook_app(bot_controller_instance):
             "open_tickets_count": open_tickets_count,
             "closed_tickets_count": closed_tickets_count,
             "all_tickets_count": all_tickets_count,
-            "brand_title": settings.get('panel_brand_title') or 'T‑Shift VPN',
+            "brand_title": settings.get('panel_brand_title') or 'NEOVPN',
+            "admin_username": admin_username,
         }
 
     @flask_app.route('/brand-title', methods=['POST'])
@@ -250,6 +253,33 @@ def create_webhook_app(bot_controller_instance):
             current_page=page,
             total_pages=total_pages,
             hosts=hosts,
+            **common_data
+        )
+
+    @flask_app.route('/traffic_stats')
+    @flask_app.route('/traffic-stats')
+    @login_required
+    def traffic_stats_page():
+        traffic_stats = get_traffic_sources_stats()
+        common_data = get_common_template_data()
+        
+        total_clicks = sum(s.get('clicks_count', 0) for s in traffic_stats)
+        total_trials = sum(s.get('trials_count', 0) for s in traffic_stats)
+        total_sales = sum(s.get('sales_count', 0) for s in traffic_stats)
+        total_income = sum(s.get('total_income', 0.0) for s in traffic_stats)
+        
+        cr_trial = round((total_trials / total_clicks * 100), 1) if total_clicks > 0 else 0
+        cr_sale = round((total_sales / total_trials * 100), 1) if total_trials > 0 else 0
+        
+        return render_template(
+            'traffic_stats.html',
+            traffic_stats=traffic_stats,
+            total_clicks=total_clicks,
+            total_trials=total_trials,
+            total_sales=total_sales,
+            total_income=total_income,
+            cr_trial=cr_trial,
+            cr_sale=cr_sale,
             **common_data
         )
 
