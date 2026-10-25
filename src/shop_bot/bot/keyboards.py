@@ -214,6 +214,8 @@ def create_main_menu_keyboard(user_keys: list, trial_available: bool, is_admin: 
                 callback_data = cfg.get('callback_data')
                 url = cfg.get('url')
                 button_id = cfg.get('button_id', '') or ''
+                if button_id == 'btn_try' and not callback_data:
+                    callback_data = 'get_trial'
 
                 # Пропускаем пустые действия
                 if not callback_data and not url:
@@ -221,7 +223,8 @@ def create_main_menu_keyboard(user_keys: list, trial_available: bool, is_admin: 
 
                 # Фильтры по условиям (trial/admin)
                 if button_id == 'btn_try':
-                    if not trial_available or get_setting("trial_enabled") != "true":
+                    trial_setting = (get_setting("trial_enabled") or "true").strip().lower()
+                    if not trial_available or trial_setting != "true":
                         continue
                 if button_id == 'btn_admin' and not is_admin:
                     continue
@@ -314,8 +317,9 @@ def create_main_menu_keyboard(user_keys: list, trial_available: bool, is_admin: 
     
     # Fallback to original hardcoded logic
     logger.info("Using fallback hardcoded button logic")
-    if trial_available and get_setting("trial_enabled") == "true":
-        builder.button(text=(get_setting("btn_try") or "🎁 Попробовать бесплатно"), callback_data="get_trial")
+    trial_is_on = (get_setting("trial_enabled") or "true").strip().lower() == "true"
+    if trial_available and trial_is_on:
+        builder.button(text=(get_setting("btn_try") or "🎁 Забрать 3 дня теста"), callback_data="get_trial")
 
     builder.button(text=(get_setting("btn_profile") or "👤 Мой профиль"), callback_data="show_profile")
     keys_label_tpl = (get_setting("btn_my_keys") or "🔑 Мои ключи ({count})")
@@ -331,7 +335,7 @@ def create_main_menu_keyboard(user_keys: list, trial_available: bool, is_admin: 
         builder.button(text=(get_setting("btn_admin") or "⚙️ Админка"), callback_data="admin_menu")
 
     layout = [
-        1 if trial_available and get_setting("trial_enabled") == "true" else 0,  # триал
+        1 if (trial_available and trial_is_on) else 0,  # триал
         2,  # профиль + мои ключи
         2,  # купить ключ + пополнить баланс
         1,  # рефералка
@@ -357,13 +361,14 @@ def create_admin_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🎁 Выдать ключ", callback_data="admin_gift_key")
     builder.button(text="⚡ Тест скорости", callback_data="admin_speedtest")
     builder.button(text="📊 Мониторинг", callback_data="admin_monitor")
+    builder.button(text="🎯 Источники трафика", callback_data="admin_traffic_stats")
     builder.button(text="🗄 Бэкап БД", callback_data="admin_backup_db")
     builder.button(text="♻️ Восстановить БД", callback_data="admin_restore_db")
     builder.button(text="👮 Администраторы", callback_data="admin_admins_menu")
     builder.button(text="🎟 Промокоды", callback_data="admin_promo_menu")
     builder.button(text="📢 Рассылка", callback_data="start_broadcast")
     builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
-    builder.adjust(2, 2, 2, 2, 1, 1, 1)
+    builder.adjust(2, 2, 2, 2, 2, 1, 1)
     return builder.as_markup()
 
 def create_admins_menu_keyboard() -> InlineKeyboardMarkup:
@@ -861,20 +866,20 @@ def create_key_info_keyboard(key_id: int) -> InlineKeyboardMarkup:
 
 def create_howto_vless_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text=(get_setting("btn_howto_android") or "📱 Android"), callback_data="howto_android")
-    builder.button(text=(get_setting("btn_howto_ios") or "📱 iOS"), callback_data="howto_ios")
+    builder.button(text=(get_setting("btn_howto_ios") or "🍏 iOS"), callback_data="howto_ios")
+    builder.button(text=(get_setting("btn_howto_android") or "🤖 Android"), callback_data="howto_android")
     builder.button(text=(get_setting("btn_howto_windows") or "💻 Windows"), callback_data="howto_windows")
-    builder.button(text=(get_setting("btn_howto_linux") or "🐧 Linux"), callback_data="howto_linux")
+    builder.button(text=(get_setting("btn_howto_macos") or "🍎 macOS"), callback_data="howto_macos")
     builder.button(text=(get_setting("btn_back_to_menu") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 def create_howto_vless_keyboard_key(key_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text=(get_setting("btn_howto_android") or "📱 Android"), callback_data="howto_android")
-    builder.button(text=(get_setting("btn_howto_ios") or "📱 iOS"), callback_data="howto_ios")
-    builder.button(text=(get_setting("btn_howto_windows") or "💻 Windows"), callback_data="howto_windows")
-    builder.button(text=(get_setting("btn_howto_linux") or "🐧 Linux"), callback_data="howto_linux")
+    builder.button(text=(get_setting("btn_howto_ios") or "🍏 iOS"), callback_data=f"howto_ios_{key_id}")
+    builder.button(text=(get_setting("btn_howto_android") or "🤖 Android"), callback_data=f"howto_android_{key_id}")
+    builder.button(text=(get_setting("btn_howto_windows") or "💻 Windows"), callback_data=f"howto_windows_{key_id}")
+    builder.button(text=(get_setting("btn_howto_macos") or "🍎 macOS"), callback_data=f"howto_macos_{key_id}")
     builder.button(text=(get_setting("btn_back_to_key") or "⬅️ Назад к ключу"), callback_data=f"show_key_{key_id}")
     builder.adjust(2, 2, 1)
     return builder.as_markup()

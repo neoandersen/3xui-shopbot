@@ -1,4 +1,6 @@
 import logging
+import re
+import html as py_html
 from aiogram import Bot, Router, F, types, html
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -195,12 +197,15 @@ def get_support_router() -> Router:
                 thread_id = forum_topic.message_thread_id
                 update_ticket_thread_info(ticket_id, str(chat_id), int(thread_id))
                 subj_display = (subject or '—')
+                safe_author = py_html.escape(author_tag)
+                safe_subj = py_html.escape(subj_display)
+                safe_msg = py_html.escape(message.text or message.caption or '')
                 header = (
-                    "🆘 Новое обращение\n"
-                    f"Тикет: #{ticket_id}\n"
-                    f"Пользователь: @{message.from_user.username or message.from_user.full_name} (ID: {user_id})\n"
-                    f"Тема: {subj_display} — от @{message.from_user.username or message.from_user.full_name} (ID: {user_id})\n\n"
-                    f"Сообщение:\n{message.text or ''}"
+                    "🆘 <b>Новое обращение</b>\n"
+                    f"Тикет: <code>#{ticket_id}</code>\n"
+                    f"Пользователь: <b>{safe_author}</b> (ID: <code>{user_id}</code>)\n"
+                    f"Тема: <b>{safe_subj}</b>\n\n"
+                    f"Сообщение:\n{safe_msg}"
                 )
                 await bot.send_message(chat_id=chat_id, text=header, message_thread_id=thread_id, reply_markup=_admin_actions_kb(ticket_id))
             except Exception as e:
@@ -211,11 +216,12 @@ def get_support_router() -> Router:
             thread_id = ticket and ticket.get('message_thread_id')
             if forum_chat_id and thread_id:
                 username = (message.from_user.username and f"@{message.from_user.username}") or message.from_user.full_name or str(message.from_user.id)
+                safe_username = py_html.escape(username)
                 await bot.send_message(
                     chat_id=int(forum_chat_id),
                     text=(
-                        f"🆕 Новое обращение от {username} (ID: {message.from_user.id}) по тикету #{ticket_id}:" if created_new
-                        else f"✉️ Новое сообщение по тикету #{ticket_id} от {username} (ID: {message.from_user.id}):"
+                        f"🆕 Новое обращение от <b>{safe_username}</b> (ID: <code>{message.from_user.id}</code>) по тикету #{ticket_id}:" if created_new
+                        else f"✉️ Новое сообщение по тикету #{ticket_id} от <b>{safe_username}</b> (ID: <code>{message.from_user.id}</code>):"
                     ),
                     message_thread_id=int(thread_id)
                 )
@@ -240,16 +246,19 @@ def get_support_router() -> Router:
             )
         # Уведомить всех администраторов
         try:
+            safe_user = py_html.escape(message.from_user.username or message.from_user.full_name or str(user_id))
+            safe_subj = py_html.escape(subject or '—')
+            safe_msg = py_html.escape(message.text or message.caption or '')
             for aid in get_admin_ids():
                 try:
                     await bot.send_message(
                         int(aid),
                         (
-                            "🆘 Новое обращение в поддержку\n"
-                            f"ID тикета: #{ticket_id}\n"
-                            f"От пользователя: @{message.from_user.username or message.from_user.full_name} (ID: {user_id})\n"
-                            f"Тема: {subject or '—'}\n\n"
-                            f"Сообщение:\n{message.text or ''}"
+                            "🆘 <b>Новое обращение в поддержку</b>\n"
+                            f"ID тикета: <code>#{ticket_id}</code>\n"
+                            f"От пользователя: <b>{safe_user}</b> (ID: <code>{user_id}</code>)\n"
+                            f"Тема: <b>{safe_subj}</b>\n\n"
+                            f"Сообщение:\n{safe_msg}"
                         )
                     )
                 except Exception:
@@ -286,9 +295,10 @@ def get_support_router() -> Router:
         human_status = "🟢 Открыт" if ticket.get('status') == 'open' else "🔒 Закрыт"
         is_star = (ticket.get('subject') or '').startswith('⭐ ')
         star_line = "⭐ Важно" if is_star else "—"
+        safe_subject = py_html.escape(ticket.get('subject') or '—')
         parts = [
-            f"🧾 Тикет #{ticket_id} — статус: {human_status}",
-            f"Тема: {ticket.get('subject') or '—'}",
+            f"🧾 <b>Тикет #{ticket_id}</b> — статус: <b>{human_status}</b>",
+            f"Тема: <b>{safe_subject}</b>",
             f"Важность: {star_line}",
             ""
         ]
@@ -297,7 +307,8 @@ def get_support_router() -> Router:
                 continue
             who = "Вы" if m.get('sender') == 'user' else 'Поддержка'
             created = m.get('created_at')
-            parts.append(f"{who} ({created}):\n{m.get('content','')}\n")
+            safe_content = py_html.escape(m.get('content', '') or '')
+            parts.append(f"<b>{who}</b> ({created}):\n{safe_content}\n")
         final_text = "\n".join(parts)
         is_open = (ticket.get('status') == 'open')
         buttons = []
@@ -305,7 +316,13 @@ def get_support_router() -> Router:
             buttons.append([types.InlineKeyboardButton(text="💬 Ответить", callback_data=f"support_reply_{ticket_id}")])
             buttons.append([types.InlineKeyboardButton(text="✅ Закрыть", callback_data=f"support_close_{ticket_id}")])
         buttons.append([types.InlineKeyboardButton(text="⬅️ К списку", callback_data="support_my_tickets")])
-        await callback.message.edit_text(final_text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
+        try:
+            await callback.message.edit_text(final_text, reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
+        except TelegramBadRequest as e:
+            if "can't parse entities" in str(e).lower():
+                await callback.message.edit_text(re.sub(r'<[^>]+>', '', final_text), reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons))
+            else:
+                raise
 
     @router.callback_query(F.data.startswith("support_reply_"))
     async def support_reply_prompt_handler(callback: types.CallbackQuery, state: FSMContext):
@@ -381,9 +398,10 @@ def get_support_router() -> Router:
                 except Exception as e:
                     logger.warning(f"Не удалось переименовать существующую тему для тикета {ticket_id}: {e}")
                 username = (message.from_user.username and f"@{message.from_user.username}") or message.from_user.full_name or str(message.from_user.id)
+                safe_username = py_html.escape(username)
                 await bot.send_message(
                     chat_id=int(forum_chat_id),
-                    text=f"✉️ Новое сообщение по тикету #{ticket_id} от {username} (ID: {message.from_user.id}):",
+                    text=f"✉️ Новое сообщение по тикету #{ticket_id} от <b>{safe_username}</b> (ID: <code>{message.from_user.id}</code>):",
                     message_thread_id=int(thread_id)
                 )
                 await bot.copy_message(chat_id=int(forum_chat_id), from_chat_id=message.chat.id, message_id=message.message_id, message_thread_id=int(thread_id))
@@ -392,13 +410,15 @@ def get_support_router() -> Router:
         admin_id = get_setting("admin_telegram_id")
         if admin_id:
             try:
+                safe_user = py_html.escape(message.from_user.username or message.from_user.full_name or str(message.from_user.id))
+                safe_msg = py_html.escape(message.text or message.caption or '')
                 await bot.send_message(
                     int(admin_id),
                     (
-                        "📩 Новое сообщение в тикете\n"
-                        f"ID тикета: #{ticket_id}\n"
-                        f"От пользователя: @{message.from_user.username or message.from_user.full_name} (ID: {message.from_user.id})\n\n"
-                        f"Сообщение:\n{message.text or ''}"
+                        "📩 <b>Новое сообщение в тикете</b>\n"
+                        f"ID тикета: <code>#{ticket_id}</code>\n"
+                        f"От пользователя: <b>{safe_user}</b> (ID: <code>{message.from_user.id}</code>)\n\n"
+                        f"Сообщение:\n{safe_msg}"
                     )
                 )
             except Exception as e:

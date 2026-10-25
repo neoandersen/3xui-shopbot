@@ -7,7 +7,7 @@ import re
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path("/app/project")
+PROJECT_ROOT = Path("/app/project") if Path("/app/project").exists() else Path(__file__).resolve().parent.parent.parent.parent
 DB_FILE = PROJECT_ROOT / "users.db"
 
 def normalize_host_name(name: str | None) -> str:
@@ -176,6 +176,17 @@ def initialize_db():
             ''')
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_button_configs_menu_type ON button_configs(menu_type, sort_order)")
             
+            # Таблица сквозной аналитики источников трафика (docs/SHOPBOT_AI_AND_ATTRIBUTION_SPEC.md)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS traffic_sources_stat (
+                    source_tag TEXT PRIMARY KEY,
+                    clicks_count INTEGER DEFAULT 0,
+                    trials_count INTEGER DEFAULT 0,
+                    sales_count INTEGER DEFAULT 0,
+                    total_income REAL DEFAULT 0.0
+                )
+            ''')
+
             default_settings = {
                 "panel_login": "admin",
                 "panel_password": "admin",
@@ -190,8 +201,9 @@ def initialize_db():
                 "howto_ios_text": None,
                 "howto_windows_text": None,
                 "howto_linux_text": None,
+                "howto_macos_text": None,
                 # Button texts (customizable)
-                "btn_try": "🎁 Попробовать бесплатно",
+                "btn_try": "🎁 Забрать 3 дня теста",
                 "btn_profile": "👤 Мой профиль",
                 "btn_my_keys": "🔑 Мои ключи ({count})",
                 "btn_buy_key": "💳 Купить ключ",
@@ -224,6 +236,7 @@ def initialize_db():
                 "btn_howto_ios": "📱 iOS",
                 "btn_howto_windows": "💻 Windows",
                 "btn_howto_linux": "🐧 Linux",
+                "btn_howto_macos": "🍎 macOS",
                 # Support menu
                 "btn_support_open": "🆘 Открыть поддержку",
                 "btn_support_new_ticket": "✍️ Новое обращение",
@@ -252,6 +265,10 @@ def initialize_db():
                 "ton_wallet_address": None,
                 "tonapi_key": None,
                 "support_forum_chat_id": None,
+                # AI Onboarding & Support bot settings
+                "openrouter_api_key": None,
+                "openrouter_model": "meta-llama/llama-3.3-70b-instruct",
+                "support_bot_username": "neovpn_supportbot",
                 # Referral program advanced
                 "enable_fixed_referral_bonus": "false",
                 "fixed_referral_bonus_amount": "50",
@@ -290,6 +307,26 @@ def initialize_db():
             else:
                 logging.info(f"Найдено {button_count} существующих конфигураций кнопок, пропускаю миграцию")
             
+            # Миграция: обновить старый текст кнопки btn_try и гарантировать 1-й ряд (row 0, width 2)
+            try:
+                cursor.execute("UPDATE bot_settings SET value = '🎁 Забрать 3 дня теста' WHERE key = 'btn_try' AND value = '🎁 Попробовать бесплатно'")
+                cursor.execute("UPDATE bot_settings SET value = 'true' WHERE key = 'trial_enabled' AND (value = 'false' OR value IS NULL)")
+                cursor.execute("UPDATE button_configs SET text = '🎁 Забрать 3 дня теста' WHERE button_id = 'btn_try' AND (text = '🎁 Попробовать бесплатно' OR text IS NULL)")
+                cursor.execute("""
+                    UPDATE button_configs 
+                    SET row_position = 0, column_position = 0, button_width = 2, is_active = 1, callback_data = 'get_trial'
+                    WHERE button_id = 'btn_try' AND menu_type = 'main_menu'
+                """)
+                # Если btn_profile был на 0 ряду, сдвинуть на 1
+                cursor.execute("""
+                    UPDATE button_configs 
+                    SET row_position = 1, column_position = 0, button_width = 2
+                    WHERE button_id = 'btn_profile' AND menu_type = 'main_menu' AND row_position = 0
+                """)
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"Ошибка миграции кнопки btn_try: {e}")
+
             # Миграция: добавить колонку created_date в vpn_keys если её нет
             try:
                 cursor.execute("PRAGMA table_info(vpn_keys)")
@@ -302,6 +339,32 @@ def initialize_db():
                     logging.info("Добавлена колонка xui_client_uuid в таблицу vpn_keys")
             except Exception as e:
                 logging.warning(f"Ошибка при добавлении колонок в таблицу vpn_keys: {e}")
+
+            # Безопасная авто-миграция: атрибуция и онбординг в таблицу users (docs/SHOPBOT_AI_AND_ATTRIBUTION_SPEC.md)
+            try:
+                cursor.execute("PRAGMA table_info(users)")
+                user_cols = {row[1] for row in cursor.fetchall()}
+                if 'acquisition_source' not in user_cols:
+                    cursor.execute("ALTER TABLE users ADD COLUMN acquisition_source TEXT")
+                    logging.info("Добавлена колонка acquisition_source в таблицу users")
+                if 'demand_segment' not in user_cols:
+                    cursor.execute("ALTER TABLE users ADD COLUMN demand_segment TEXT DEFAULT 'general'")
+                    logging.info("Добавлена колонка demand_segment в таблицу users")
+                if 'trial_granted' not in user_cols:
+                    cursor.execute("ALTER TABLE users ADD COLUMN trial_granted BOOLEAN DEFAULT 0")
+                    logging.info("Добавлена колонка trial_granted в таблицу users")
+                if 'trial_granted_at' not in user_cols:
+                    cursor.execute("ALTER TABLE users ADD COLUMN trial_granted_at TIMESTAMP")
+                    logging.info("Добавлена колонка trial_granted_at в таблицу users")
+                if 'converted_to_paid' not in user_cols:
+                    cursor.execute("ALTER TABLE users ADD COLUMN converted_to_paid BOOLEAN DEFAULT 0")
+                    logging.info("Добавлена колонка converted_to_paid в таблицу users")
+                if 'last_start_at' not in user_cols:
+                    cursor.execute("ALTER TABLE users ADD COLUMN last_start_at TIMESTAMP")
+                    logging.info("Добавлена колонка last_start_at в таблицу users")
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"Ошибка при миграции схемы таблицы users: {e}")
             
             logging.info("База данных успешно инициализирована.")
     except sqlite3.Error as e:
@@ -591,7 +654,7 @@ def redeem_promo_code(
         return None
 
 def run_migration():
-    if not DB_FILE.exists():
+    if not Path(DB_FILE).exists():
         logging.error("Файл базы данных users.db не найден. Мигрировать нечего.")
         return
 
@@ -1624,31 +1687,159 @@ def update_plan(plan_id: int, plan_name: str, months: int, price: float) -> bool
         logging.error(f"Не удалось обновить план {plan_id}: {e}")
         return False
 
-def register_user_if_not_exists(telegram_id: int, username: str, referrer_id):
+def register_user_if_not_exists(telegram_id: int, username: str, referrer_id=None, acquisition_source: str = None, demand_segment: str = None):
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT referred_by FROM users WHERE telegram_id = ?", (telegram_id,))
+            cursor.execute("SELECT referred_by, acquisition_source, demand_segment FROM users WHERE telegram_id = ?", (telegram_id,))
             row = cursor.fetchone()
+            now = datetime.now()
             if not row:
-                # Новый пользователь — сразу сохраняем возможного реферера
+                # Новый пользователь — сразу сохраняем возможного реферера и атрибуцию трафика
                 cursor.execute(
-                    "INSERT INTO users (telegram_id, username, registration_date, referred_by) VALUES (?, ?, ?, ?)",
-                    (telegram_id, username, datetime.now(), referrer_id)
+                    """
+                    INSERT INTO users (telegram_id, username, registration_date, referred_by, acquisition_source, demand_segment, last_start_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (telegram_id, username, now, referrer_id, acquisition_source, demand_segment or 'general', now)
                 )
             else:
-                # Пользователь уже есть — обновим username, и если есть реферер и поле пустое, допишем
-                cursor.execute("UPDATE users SET username = ? WHERE telegram_id = ?", (username, telegram_id))
+                # Пользователь уже есть — обновим username и last_start_at
+                cursor.execute("UPDATE users SET username = ?, last_start_at = ? WHERE telegram_id = ?", (username, now, telegram_id))
                 current_ref = row[0]
+                current_source = row[1]
                 if referrer_id and (current_ref is None or str(current_ref).strip() == "") and int(referrer_id) != int(telegram_id):
                     try:
                         cursor.execute("UPDATE users SET referred_by = ? WHERE telegram_id = ?", (int(referrer_id), telegram_id))
                     except Exception:
-                        # best-effort
+                        pass
+                if acquisition_source and (current_source is None or str(current_source).strip() == ""):
+                    try:
+                        cursor.execute("UPDATE users SET acquisition_source = ?, demand_segment = ? WHERE telegram_id = ?", (acquisition_source, demand_segment or 'general', telegram_id))
+                    except Exception:
                         pass
             conn.commit()
     except sqlite3.Error as e:
         logging.error(f"Не удалось зарегистрировать пользователя {telegram_id}: {e}")
+
+def record_traffic_click(source_tag: str):
+    """Increment clicks count for a traffic source tag."""
+    if not source_tag:
+        return
+    tag = source_tag.strip()
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO traffic_sources_stat (source_tag, clicks_count, trials_count, sales_count, total_income)
+                VALUES (?, 1, 0, 0, 0.0)
+                ON CONFLICT(source_tag) DO UPDATE SET clicks_count = clicks_count + 1
+                """,
+                (tag,)
+            )
+            conn.commit()
+            logging.info(f"Зафиксирован переход по источнику трафика: {tag}")
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при записи перехода по источнику {tag}: {e}")
+
+def record_trial_granted(telegram_id: int):
+    """Mark trial as granted for user and increment trials_count in traffic stats."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            now = datetime.now()
+            cursor.execute(
+                "UPDATE users SET trial_used = 1, trial_granted = 1, trial_granted_at = ? WHERE telegram_id = ?",
+                (now, telegram_id)
+            )
+            cursor.execute("SELECT acquisition_source FROM users WHERE telegram_id = ?", (telegram_id,))
+            row = cursor.fetchone()
+            if row and row['acquisition_source']:
+                tag = row['acquisition_source'].strip()
+                cursor.execute(
+                    """
+                    INSERT INTO traffic_sources_stat (source_tag, clicks_count, trials_count, sales_count, total_income)
+                    VALUES (?, 0, 1, 0, 0.0)
+                    ON CONFLICT(source_tag) DO UPDATE SET trials_count = trials_count + 1
+                    """,
+                    (tag,)
+                )
+            conn.commit()
+            logging.info(f"Триал успешно выдан пользователю {telegram_id}.")
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при записи выдачи триала для {telegram_id}: {e}")
+
+def record_paid_conversion(telegram_id: int, amount: float):
+    """Mark user as converted to paid and record sale and income in traffic stats."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET converted_to_paid = 1 WHERE telegram_id = ?",
+                (telegram_id,)
+            )
+            cursor.execute("SELECT acquisition_source FROM users WHERE telegram_id = ?", (telegram_id,))
+            row = cursor.fetchone()
+            if row and row['acquisition_source']:
+                tag = row['acquisition_source'].strip()
+                cursor.execute(
+                    """
+                    INSERT INTO traffic_sources_stat (source_tag, clicks_count, trials_count, sales_count, total_income)
+                    VALUES (?, 0, 0, 1, ?)
+                    ON CONFLICT(source_tag) DO UPDATE SET sales_count = sales_count + 1, total_income = total_income + ?
+                    """,
+                    (tag, amount, amount)
+                )
+            conn.commit()
+            logging.info(f"Зафиксирована платная конверсия для пользователя {telegram_id} на сумму {amount} руб.")
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при записи платной конверсии для {telegram_id}: {e}")
+
+def get_traffic_sources_stats() -> list[dict]:
+    """Retrieve all traffic sources statistics."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM traffic_sources_stat ORDER BY clicks_count DESC")
+            return [dict(r) for r in cursor.fetchall()]
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при получении статистики источников трафика: {e}")
+        return []
+
+def get_user_last_start(telegram_id: int) -> Optional[datetime]:
+    """Get timestamp of last /start command for user."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT last_start_at FROM users WHERE telegram_id = ?", (telegram_id,))
+            row = cursor.fetchone()
+            if row and row['last_start_at']:
+                val = row['last_start_at']
+                if isinstance(val, str):
+                    try:
+                        return datetime.fromisoformat(val)
+                    except Exception:
+                        return None
+                return val
+            return None
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при получении last_start_at для {telegram_id}: {e}")
+        return None
+
+def update_user_last_start(telegram_id: int):
+    """Update last_start_at timestamp for user."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET last_start_at = ? WHERE telegram_id = ?", (datetime.now(), telegram_id))
+            conn.commit()
+    except sqlite3.Error as e:
+        logging.error(f"Ошибка при обновлении last_start_at для {telegram_id}: {e}")
 
 def add_to_referral_balance(user_id: int, amount: float):
     try:
@@ -1969,14 +2160,7 @@ def get_paginated_transactions(page: int = 1, per_page: int = 15) -> tuple[list[
     return transactions, total
 
 def set_trial_used(telegram_id: int):
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE users SET trial_used = 1 WHERE telegram_id = ?", (telegram_id,))
-            conn.commit()
-            logging.info(f"Пробный период отмечен как использованный для пользователя {telegram_id}.")
-    except sqlite3.Error as e:
-        logging.error(f"Не удалось отметить пробный период как использованный для пользователя {telegram_id}: {e}")
+    record_trial_granted(telegram_id)
 
 def add_new_key(user_id: int, host_name: str, xui_client_uuid: str, key_email: str, expiry_timestamp_ms: int):
     try:
@@ -2713,7 +2897,7 @@ def migrate_existing_buttons() -> bool:
             menu_configs = {
                 'main_menu': [
                     # Row 0: Wide buttons (full width)
-                    {'button_id': 'btn_try', 'callback_data': 'get_trial', 'text': '🎁 Попробовать бесплатно', 'row_position': 0, 'column_position': 0, 'button_width': 2},
+                    {'button_id': 'btn_try', 'callback_data': 'get_trial', 'text': '🎁 Забрать 3 дня теста', 'row_position': 0, 'column_position': 0, 'button_width': 2},
                     {'button_id': 'btn_profile', 'callback_data': 'show_profile', 'text': '👤 Мой профиль', 'row_position': 1, 'column_position': 0, 'button_width': 2},
                     
                     # Row 2: Two buttons

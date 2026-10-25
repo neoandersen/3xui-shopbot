@@ -1,0 +1,121 @@
+# Исследование архитектуры и отчет реализации: NeoVPN ShopBot (AI & Attribution)
+
+Данный документ фиксирует результаты аудита, проектирования и внедрения системы атрибуции трафика, AI-онбординга и оптимизации UI/UX для Telegram-бота продаж `@neovpn_servers_bot` (`3xui-shopbot`) в соответствии со спецификацией [docs/SHOPBOT_AI_AND_ATTRIBUTION_SPEC.md](file:///d:/REPOS/projects/VB/source/3xui-shopbot-main/docs/SHOPBOT_AI_AND_ATTRIBUTION_SPEC.md).
+
+---
+
+## 1. Архитектурный контекст и цели
+
+В экосистеме NEOVPN сервис внешней лидогенерации `neovpn-promoter` (Радар) перенаправляет целевой трафик по диплинкам:
+`https://t.me/neovpn_servers_bot?start=<payload>`
+
+### Действующие сегменты и теги:
+| Диплинк-тег | Сегмент спроса | Ключевая боль / Потребность | Преимущество VLESS Reality |
+|---|---|---|---|
+| `ref_yt` | `youtube` | Замедление YouTube / 4K Smart TV / троттлинг | Обход троттлинга ТСПУ, 4K без буферизации |
+| `ref_ds` | `discord` | Блокировка Discord / войс / высокий пинг / UDP | Оптимизация UDP, стабильный войс, низкий пинг |
+| `ref_rkn` | `tspu` | Блокировки ТСПУ / падение WireGuard, Outline | Бессигнатурный протокол Reality под видом HTTPS |
+| `ref_mob` | `mobile` | Мобильные ОС (iOS/Android) / экономия батареи | Нативные клиенты (Streisand, FoXray, v2rayNG), 0% жор батареи |
+| `ub_bio` | `organic` | Трафик из профиля юзербота-скаута | Полная свобода интернета до 1 Гбит/с |
+| `ref_promo` | `organic` | Промо-кампании и спецпредложения | Быстрый тест скорости и надежности |
+
+---
+
+## 2. Анализ и исправление критических дефектов
+
+### 2.1. Ошибка парсинга реферальных кодов (`ValueError: invalid literal for int()`)
+- **Проблема**: В оригинальном коде `start_handler` любая строка, начинающаяся с `ref_`, безусловно парсилась как `int(args.split('_')[1])`. Это приводило к `ValueError: invalid literal for int() with base 10: 'yt'` при переходе по маркетинговым ссылкам `ref_yt`, `ref_ds`, `ref_rkn`, `ref_mob`. В результате бот падал в ошибку, терял атрибуцию и не регистрировал переход.
+- **Решение**: Реализовано разделение реферальных кодов пользователей (`ref_<digits>` или `<digits>`) и маркетинговых тегов атрибуции (`ref_yt`, `ref_ds`, `ref_rkn`, `ref_mob`, `ref_promo`, `ub_bio`).
+
+### 2.2. Устранение `TelegramBadRequest: can't parse entities`
+- **Проблема**: Боты используют `DefaultBotProperties(parse_mode=ParseMode.HTML)`. Вставка необработанных строк (имена пользователей с `<`, `>`, `&`, текст сообщений тикетов саппорта с vless-ссылками или спецсимволами, markdown-токены от AI) вызывала фатальные ошибки парсинга разметки Telegram.
+- **Решение**:
+  1. Внедрен строгий санитизатор `sanitize_telegram_html()`, преобразующий markdown (`**bold**`, `` `code` ``, `*italic*`) в безопасные HTML-теги `<b>`, `<code>`, `<i>` с экранированием всех остальных угловых скобок и амперсандов.
+  2. Все пользовательские строки (имена, темы обращений, текст сообщений) экранируются через `py_html.escape()`.
+  3. Для фолбэка добавлен перехват `TelegramBadRequest: can't parse entities` со снятием тегов (`re.sub(r'<[^>]+>', '', text)`).
+
+---
+
+## 3. UI/UX Оптимизация витрины
+
+### 3.1. Кнопка 3-дневного триала на первом ряду (Full-Width)
+- Кнопка `[ 🎁 Забрать 3 дня теста ]` вынесена на первый ряд (row 0, width 2) во всю ширину экрана.
+- Кнопка отображается динамически: только если пользователь еще не активировал триал (`trial_available and trial_is_on`).
+- Обеспечена автоматическая миграция раскладки кнопок в таблице `button_configs` базы данных, гарантирующая сдвиг профиля на 2-й ряд, а триала — на 1-й ряд.
+
+### 3.2. Сетка выбора платформ 2x2
+В клавиатурах инструкций `create_howto_vless_keyboard()` и `create_howto_vless_keyboard_key()` сформирована симметричная сетка 2x2:
+```
+[ 📱 iOS ]      [ 📱 Android ]
+[ 💻 Windows ]  [ 🍎 macOS ]
+[      ⬅️ Назад в меню      ]
+```
+Добавлен полноценный обработчик подключения для `macOS` (`FoXray` / `V2box`), а также поддержка инструкций из карточки конкретного ключа (`howto_<os>_<key_id>`).
+
+### 3.3. Логика выдачи 3-дневного теста VLESS Reality
+- Проверка выдачи строго 1 раз на уникальный Telegram ID (`trial_used` или `trial_granted`).
+- Генерация конфигурации VLESS Reality на сервере 3x-ui с уникальным email вида `trial_<username>@bot.local`.
+- Фиксация времени выдачи `trial_granted_at` и учет в сквозной аналитике источников.
+
+---
+
+## 4. Схема БД и сквозная аналитика трафика
+
+### 4.1. Модели SQLAlchemy 2.0 (asyncpg / PostgreSQL)
+Созданы декларативные модели в пакетах `src/shop_bot/models/` и `app/models/`:
+- [Base](file:///d:/REPOS/projects/VB/source/3xui-shopbot-main/src/shop_bot/models/base.py) — базовый декларативный класс.
+- [User](file:///d:/REPOS/projects/VB/source/3xui-shopbot-main/src/shop_bot/models/user.py) — модель пользователя с полями:
+  - `acquisition_source` (String, nullable) — тег диплинка (например, `ref_yt`).
+  - `demand_segment` (String, default='general') — сегмент спроса (`youtube`, `discord`, `tspu`, `mobile`, `organic`).
+  - `trial_granted` (Boolean, default=False) — факт выдачи бесплатного теста.
+  - `trial_granted_at` (DateTime, nullable) — таймстамп активации триала.
+  - `converted_to_paid` (Boolean, default=False) — совершение первой оплаты.
+  - `last_start_at` (Integer, nullable) — unix timestamp последнего вызова `/start`.
+- [TrafficSourcesStat](file:///d:/REPOS/projects/VB/source/3xui-shopbot-main/src/shop_bot/models/traffic.py) — модель сводной статистики:
+  - `source_tag` (String, PK)
+  - `description` (String)
+  - `clicks_count` (Integer)
+  - `trials_count` (Integer)
+  - `sales_count` (Integer)
+  - `total_income` (Float)
+
+### 4.2. Безопасная автомиграция активной SQLite БД (`users.db`)
+В [database.py](file:///d:/REPOS/projects/VB/source/3xui-shopbot-main/src/shop_bot/data_manager/database.py) при каждом запуске `initialize_db()`:
+1. Создается таблица `traffic_sources_stat` с начальными описаниями всех тегов Радара.
+2. Проверяется наличие и при необходимости безопасно добавляются колонки в `users` через `ALTER TABLE ADD COLUMN`.
+3. Заполняются системные настройки `openrouter_api_key`, `openrouter_model`, `support_bot_username`.
+
+### 4.3. Команды аналитики
+- Добавлена команда администратора `/traffic_stats` в основном боте.
+- Добавлена кнопка «🎯 Источники трафика» (`admin_traffic_stats`) в админ-меню с интерактивным просмотром конверсий (Клики → Триалы (CR) → Продажи (CR) → Выручка).
+
+---
+
+## 5. AI-онбординг и автоответчик (OpenRouter API)
+
+Создан сервис [src/shop_bot/services/ai_onboarding.py](file:///d:/REPOS/projects/VB/source/3xui-shopbot-main/src/shop_bot/services/ai_onboarding.py) (с реэкспортом в `app/services/ai_onboarding.py`):
+
+1. **Генерация персонализированного приветствия**:
+   - При переходе по диплинку формируется персонализированный оффер под боль клиента (YouTube 4K, Discord UDP, ТСПУ/VPN бан, Mobile iOS/Android).
+   - Лимит времени вызова OpenRouter: **строго 2.5 секунды** (`asyncio.wait_for(..., timeout=2.5)`).
+   - При отсутствии ключа, ошибке сети или таймауте >2.5с срабатывает **мгновенный откат (fallback)** на выверенные шаблоны сегментов.
+
+2. **Автоответчик первого контакта (15-минутное окно)**:
+   - Если пользователь пишет в чат обычным текстом в течение 15 минут после `/start` (при пустом FSM-состоянии), бот распознает вопрос и отвечает с помощью AI с учетом контекста сегмента.
+   - Под ответом выводятся кнопки:
+     - `[ 🎁 Забрать 3 дня теста ]` (если триал еще не взят)
+     - `[ 📖 Инструкция по подключению ]`
+     - `[ 💬 Написать в техподдержку ]` (прямая ссылка на `@neovpn_supportbot`)
+
+---
+
+## 6. Инструкции по дальнейшей поддержке
+
+1. **Настройка OpenRouter**:
+   В панели админа или в настройках `bot_settings` задать ключ:
+   - `openrouter_api_key` = `<ваш_openrouter_api_key>`
+   - `openrouter_model` = `meta-llama/llama-3.3-70b-instruct` (или любая другая модель OpenRouter)
+   - `support_bot_username` = `neovpn_supportbot`
+
+2. **Добавление новых источников Радара**:
+   Для добавления нового диплинк-тега (например, `ref_tg` для Telegram Proxy) достаточно расширить словарь `ATTRIBUTION_MAP` и `STATIC_FALLBACK_TEMPLATES` в `src/shop_bot/services/ai_onboarding.py`. Статистика по новому тегу начнет собираться в `traffic_sources_stat` автоматически с первого клика.

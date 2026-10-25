@@ -252,6 +252,72 @@ def get_admin_router() -> Router:
         await callback.answer()
         await admin_monitor_open(callback)
 
+    @admin_router.callback_query(F.data == "admin_traffic_stats")
+    async def admin_traffic_stats_handler(callback: types.CallbackQuery):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        stats = database.get_traffic_sources_stats()
+        if not stats:
+            builder = InlineKeyboardBuilder()
+            builder.button(text="⬅️ В админ-меню", callback_data="admin_menu")
+            await callback.message.edit_text("📊 Статистика источников трафика пока пуста.", reply_markup=builder.as_markup())
+            return
+
+        lines = ["📊 <b>Статистика источников трафика (Радар / Диплинки):</b>\n"]
+        total_clicks = 0
+        total_trials = 0
+        total_sales = 0
+        total_income = 0.0
+
+        for s in stats:
+            tag = s.get('source_tag')
+            clicks = s.get('clicks_count', 0)
+            trials = s.get('trials_count', 0)
+            sales = s.get('sales_count', 0)
+            income = float(s.get('total_income', 0.0) or 0.0)
+            desc = s.get('description', '')
+
+            total_clicks += clicks
+            total_trials += trials
+            total_sales += sales
+            total_income += income
+
+            cr_trial = (trials / clicks * 100) if clicks > 0 else 0.0
+            cr_sale = (sales / clicks * 100) if clicks > 0 else 0.0
+
+            lines.append(
+                f"🏷 <code>{tag}</code> ({desc})\n"
+                f"  • Переходы: <b>{clicks}</b>\n"
+                f"  • Триалы: <b>{trials}</b> (CR: {cr_trial:.1f}%)\n"
+                f"  • Продажи: <b>{sales}</b> (CR: {cr_sale:.1f}%)\n"
+                f"  • Выручка: <b>{income:.2f} RUB</b>\n"
+            )
+
+        cr_total_trial = (total_trials / total_clicks * 100) if total_clicks > 0 else 0.0
+        cr_total_sale = (total_sales / total_clicks * 100) if total_clicks > 0 else 0.0
+        lines.append(
+            f"📈 <b>ИТОГО:</b>\n"
+            f"  • Переходов: <b>{total_clicks}</b>\n"
+            f"  • Триалов: <b>{total_trials}</b> (CR: {cr_total_trial:.1f}%)\n"
+            f"  • Продаж: <b>{total_sales}</b> (CR: {cr_total_sale:.1f}%)\n"
+            f"  • Выручка: <b>{total_income:.2f} RUB</b>"
+        )
+
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔄 Обновить", callback_data="admin_traffic_stats")
+        builder.button(text="⬅️ В админ-меню", callback_data="admin_menu")
+        builder.adjust(1)
+
+        try:
+            await callback.message.edit_text("\n".join(lines), reply_markup=builder.as_markup(), parse_mode="HTML")
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e).lower():
+                pass
+            else:
+                raise
+
 
     @admin_router.callback_query(F.data == "admin_administrators")
     async def admin_administrators_handler(callback: types.CallbackQuery):

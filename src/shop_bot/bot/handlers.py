@@ -31,9 +31,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.enums import ChatMemberStatus
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+import html as py_html
 
 from shop_bot.bot import keyboards
 from shop_bot.modules import xui_api
+from shop_bot.services import ai_onboarding
 from shop_bot.data_manager.database import (
     get_user, add_new_key, get_user_keys, update_user_stats,
     register_user_if_not_exists, get_next_key_number, get_key_by_id,
@@ -55,6 +57,12 @@ from shop_bot.data_manager.database import (
     redeem_promo_code,
     update_promo_code_status,
     get_admin_ids,
+    record_traffic_click,
+    record_trial_granted,
+    record_paid_conversion,
+    get_traffic_sources_stats,
+    get_user_last_start,
+    update_user_last_start,
 )
 from shop_bot.config import (
     CHOOSE_PLAN_MESSAGE,
@@ -106,7 +114,7 @@ async def show_main_menu(message: types.Message, edit_message: bool = False):
     user_db_data = get_user(user_id)
     user_keys = get_user_keys(user_id)
     
-    trial_available = not (user_db_data and user_db_data.get('trial_used'))
+    trial_available = not (user_db_data and (user_db_data.get('trial_used') or user_db_data.get('trial_granted')))
     is_admin_flag = is_admin(user_id)
 
     custom_main_text = get_setting("main_menu_text")
@@ -116,10 +124,22 @@ async def show_main_menu(message: types.Message, edit_message: bool = False):
     if edit_message:
         try:
             await message.edit_text(text, reply_markup=keyboard)
-        except TelegramBadRequest:
-            pass
+        except TelegramBadRequest as e:
+            if "can't parse entities" in str(e).lower():
+                try:
+                    await message.edit_text(re.sub(r'<[^>]+>', '', text), reply_markup=keyboard)
+                except Exception:
+                    pass
+            else:
+                pass
     else:
-        await message.answer(text, reply_markup=keyboard)
+        try:
+            await message.answer(text, reply_markup=keyboard)
+        except TelegramBadRequest as e:
+            if "can't parse entities" in str(e).lower():
+                await message.answer(re.sub(r'<[^>]+>', '', text), reply_markup=keyboard)
+            else:
+                raise
 
 async def process_successful_onboarding(callback: types.CallbackQuery, state: FSMContext):
     """Завершает онбординг: ставит флаг согласия и открывает главное меню."""
@@ -187,21 +207,40 @@ def get_user_router() -> Router:
     @user_router.message(CommandStart())
     async def start_handler(message: types.Message, state: FSMContext, bot: Bot, command: CommandObject):
         user_id = message.from_user.id
-        username = message.from_user.username or message.from_user.full_name
+        raw_username = message.from_user.username or message.from_user.full_name or f"user{user_id}"
+        username = raw_username
         referrer_id = None
+        attribution_tag = None
+        demand_segment = "general"
 
-        if command.args and command.args.startswith('ref_'):
-            try:
-                potential_referrer_id = int(command.args.split('_')[1])
+        if command.args:
+            raw_arg = command.args.strip()
+            # If plain numeric or ref_<digits>, it's a referral link
+            if raw_arg.isdigit():
+                potential_referrer_id = int(raw_arg)
                 if potential_referrer_id != user_id:
                     referrer_id = potential_referrer_id
                     logger.info(f"Новый пользователь {user_id} был приглашен пользователем {referrer_id}")
-            except (IndexError, ValueError):
-                logger.warning(f"Получен некорректный реферальный код: {command.args}")
-                
-        register_user_if_not_exists(user_id, username, referrer_id)
-        user_id = message.from_user.id
-        username = message.from_user.username or message.from_user.full_name
+            elif raw_arg.startswith('ref_') and raw_arg[4:].isdigit():
+                potential_referrer_id = int(raw_arg[4:])
+                if potential_referrer_id != user_id:
+                    referrer_id = potential_referrer_id
+                    logger.info(f"Новый пользователь {user_id} был приглашен пользователем {referrer_id}")
+            else:
+                # Marketing attribution tag (e.g., ref_yt, ref_ds, ref_rkn, ref_mob, ub_bio, ref_promo)
+                attribution_tag = raw_arg
+                demand_segment, _ = ai_onboarding.get_demand_segment_for_tag(attribution_tag)
+                logger.info(f"Входящий трафик: пользователь {user_id}, источник '{attribution_tag}', сегмент '{demand_segment}'")
+                record_traffic_click(attribution_tag)
+
+        register_user_if_not_exists(
+            user_id,
+            username,
+            referrer_id=referrer_id,
+            acquisition_source=attribution_tag,
+            demand_segment=demand_segment
+        )
+        update_user_last_start(user_id)
         user_data = get_user(user_id)
 
         # Бонус при старте для пригласившего (fixed_start_referrer): единоразово, когда новый пользователь запускает бота по реферальной ссылке
@@ -233,37 +272,92 @@ def get_user_router() -> Router:
                     pass
                 # Уведомим пригласившего
                 try:
+                    safe_invited_name = py_html.escape(message.from_user.full_name)
                     await bot.send_message(
                         chat_id=int(referrer_id),
                         text=(
                             "🎁 Начисление за приглашение!\n"
-                            f"Новый пользователь: {message.from_user.full_name} (ID: {user_id})\n"
+                            f"Новый пользователь: {safe_invited_name} (ID: {user_id})\n"
                             f"Бонус: {float(start_bonus):.2f} RUB"
                         )
                     )
                 except Exception:
                     pass
 
+        # Проверяем обязательность условий/подписки
+        terms_url = get_setting("terms_url")
+        privacy_url = get_setting("privacy_url")
+        channel_url = get_setting("channel_url")
+        is_subscription_forced = get_setting("force_subscription") == "true"
+        show_welcome_screen = (is_subscription_forced and channel_url) or (terms_url and privacy_url)
+
+        # Если перешли по контекстному диплинку: генерируем AI-онбординг
+        if attribution_tag:
+            personalized_text = await ai_onboarding.generate_welcome_message(
+                tag=attribution_tag,
+                user_name=message.from_user.full_name
+            )
+            # Если условия уже приняты или не требуются:
+            if (user_data and user_data.get('agreed_to_terms')) or not show_welcome_screen:
+                set_terms_agreed(user_id)
+                user_keys = get_user_keys(user_id)
+                trial_available = not (user_data and (user_data.get('trial_used') or user_data.get('trial_granted')))
+                is_admin_flag = is_admin(user_id)
+                kb = keyboards.create_main_menu_keyboard(user_keys, trial_available, is_admin_flag)
+                try:
+                    await message.answer(
+                        personalized_text,
+                        reply_markup=kb,
+                        disable_web_page_preview=True
+                    )
+                except TelegramBadRequest:
+                    plain = re.sub(r'<[^>]+>', '', personalized_text)
+                    await message.answer(plain, reply_markup=kb, disable_web_page_preview=True)
+                return
+            else:
+                # Требуется подписка/условия, но показываем адаптивный оффер
+                welcome_parts = [personalized_text + "\n"]
+                if is_subscription_forced and channel_url:
+                    welcome_parts.append("Для доступа ко всем функциям, пожалуйста, подпишитесь на наш канал.")
+                if terms_url and privacy_url:
+                    welcome_parts.append(
+                        "Также необходимо ознакомиться и принять наши "
+                        f"<a href='{terms_url}'>Условия использования</a> и "
+                        f"<a href='{privacy_url}'>Политику конфиденциальности</a>."
+                    )
+                welcome_parts.append("\nПосле этого нажмите кнопку ниже.")
+                final_text = "\n".join(welcome_parts)
+                try:
+                    await message.answer(
+                        final_text,
+                        reply_markup=keyboards.create_welcome_keyboard(
+                            channel_url=channel_url,
+                            is_subscription_forced=is_subscription_forced
+                        ),
+                        disable_web_page_preview=True
+                    )
+                except TelegramBadRequest:
+                    plain = re.sub(r'<[^>]+>', '', final_text)
+                    await message.answer(
+                        plain,
+                        reply_markup=keyboards.create_welcome_keyboard(
+                            channel_url=channel_url,
+                            is_subscription_forced=is_subscription_forced
+                        ),
+                        disable_web_page_preview=True
+                    )
+                await state.set_state(Onboarding.waiting_for_subscription_and_agreement)
+                return
+
+        # Стандартная ветка без контекстного тега
         if user_data and user_data.get('agreed_to_terms'):
+            safe_user_name = py_html.escape(message.from_user.full_name)
             await message.answer(
-                f"👋 Снова здравствуйте, {html.bold(message.from_user.full_name)}!",
+                f"👋 Снова здравствуйте, <b>{safe_user_name}</b>!",
                 reply_markup=keyboards.main_reply_keyboard
             )
             await show_main_menu(message)
             return
-
-        terms_url = get_setting("terms_url")
-        privacy_url = get_setting("privacy_url")
-        channel_url = get_setting("channel_url")
-
-        if not channel_url and (not terms_url or not privacy_url):
-            set_terms_agreed(user_id)
-            await show_main_menu(message)
-            return
-
-        is_subscription_forced = get_setting("force_subscription") == "true"
-        
-        show_welcome_screen = (is_subscription_forced and channel_url) or (terms_url and privacy_url)
 
         if not show_welcome_screen:
             set_terms_agreed(user_id)
@@ -271,20 +365,17 @@ def get_user_router() -> Router:
             return
 
         welcome_parts = ["<b>Добро пожаловать!</b>\n"]
-        
         if is_subscription_forced and channel_url:
             welcome_parts.append("Для доступа ко всем функциям, пожалуйста, подпишитесь на наш канал.")
-        
         if terms_url and privacy_url:
             welcome_parts.append(
                 "Также необходимо ознакомиться и принять наши "
                 f"<a href='{terms_url}'>Условия использования</a> и "
                 f"<a href='{privacy_url}'>Политику конфиденциальности</a>."
             )
-        
         welcome_parts.append("\nПосле этого нажмите кнопку ниже.")
         final_text = "\n".join(welcome_parts)
-        
+
         await message.answer(
             final_text,
             reply_markup=keyboards.create_welcome_keyboard(
@@ -1071,12 +1162,12 @@ def get_user_router() -> Router:
             reply_markup=keyboards.create_keys_management_keyboard(user_keys)
         )
 
-    @user_router.callback_query(F.data == "get_trial")
+    @user_router.callback_query(F.data.in_({"get_trial", "trial_period"}))
     @registration_required
     async def trial_period_handler(callback: types.CallbackQuery, state: FSMContext):
         user_id = callback.from_user.id
         user_db_data = get_user(user_id)
-        if user_db_data and user_db_data.get('trial_used'):
+        if user_db_data and (user_db_data.get('trial_used') or user_db_data.get('trial_granted')):
             await callback.answer("Вы уже использовали бесплатный пробный период.", show_alert=True)
             return
 
@@ -1113,6 +1204,11 @@ def get_user_router() -> Router:
         host_name = host_entry.get('host_name')
 
         if action == "trial":
+            user_id = callback.from_user.id
+            user_db_data = get_user(user_id)
+            if user_db_data and (user_db_data.get('trial_used') or user_db_data.get('trial_granted')):
+                await callback.answer("Вы уже использовали бесплатный пробный период.", show_alert=True)
+                return
             await callback.answer()
             await process_trial_key_creation(callback.message, host_name)
             return
@@ -1121,7 +1217,8 @@ def get_user_router() -> Router:
             await callback.answer()
             plans = get_plans_for_host(host_name)
             if not plans:
-                await callback.message.edit_text(f"❌ Для сервера \"{host_name}\" не настроены тарифы.")
+                safe_host_err = py_html.escape(host_name)
+                await callback.message.edit_text(f"❌ Для сервера «{safe_host_err}» не настроены тарифы.")
                 return
             await callback.message.edit_text(
                 CHOOSE_PLAN_MESSAGE or "Выберите тариф:",
@@ -1142,11 +1239,23 @@ def get_user_router() -> Router:
 
     async def process_trial_key_creation(message: types.Message, host_name: str):
         user_id = message.chat.id
-        await message.edit_text(f"Отлично! Создаю для вас бесплатный ключ на {get_setting('trial_duration_days')} дня на сервере \"{host_name}\"...")
+        user_data = get_user(user_id) or {}
+        if user_data.get('trial_used') or user_data.get('trial_granted'):
+            try:
+                await message.edit_text("❌ Вы уже активировали бесплатный пробный период ранее.")
+            except Exception:
+                await message.answer("❌ Вы уже активировали бесплатный пробный период ранее.")
+            return
+
+        safe_host = py_html.escape(host_name)
+        trial_days = get_setting('trial_duration_days') or '3'
+        try:
+            await message.edit_text(f"Отлично! Создаю для вас бесплатный ключ на {trial_days} дня на сервере «{safe_host}»...")
+        except Exception:
+            pass
 
         try:
             # email: trial_{username}@bot.local с авто-суффиксом при коллизиях
-            user_data = get_user(user_id) or {}
             raw_username = (user_data.get('username') or f'user{user_id}').lower()
             username_slug = re.sub(r"[^a-z0-9._-]", "_", raw_username).strip("_")[:16] or f"user{user_id}"
             base_local = f"trial_{username_slug}"
@@ -1166,7 +1275,7 @@ def get_user_router() -> Router:
             result = await xui_api.create_or_update_key_on_host(
                 host_name=host_name,
                 email=candidate_email,
-                days_to_add=int(get_setting("trial_duration_days"))
+                days_to_add=int(trial_days)
             )
             if not result:
                 await message.edit_text("❌ Не удалось создать пробный ключ. Ошибка на сервере.")
@@ -1487,10 +1596,17 @@ def get_user_router() -> Router:
             pass
 
 
-    @user_router.callback_query(F.data == "howto_android")
+    def _get_howto_keyboard(cb_data: str):
+        parts = cb_data.split("_")
+        if len(parts) >= 3 and parts[-1].isdigit():
+            return keyboards.create_howto_vless_keyboard_key(int(parts[-1]))
+        return keyboards.create_howto_vless_keyboard()
+
+    @user_router.callback_query(F.data.startswith("howto_android"))
     @registration_required
     async def howto_android_handler(callback: types.CallbackQuery):
         await callback.answer()
+        kb = _get_howto_keyboard(callback.data)
         try:
             await callback.message.edit_text(
                 (get_setting("howto_android_text") or (
@@ -1505,16 +1621,17 @@ def get_user_router() -> Router:
                     "5. <b>Подключитесь к VPN:</b> Нажмите на кнопку подключения (значок «V» или воспроизведения). Возможно, потребуется разрешение на создание VPN-подключения.\n"
                     "6. <b>Проверьте подключение:</b> После подключения проверьте свой IP-адрес, например, на https://whatismyipaddress.com/. Он должен отличаться от вашего реального IP."
                 )),
-            reply_markup=keyboards.create_howto_vless_keyboard(),
-            disable_web_page_preview=True
-        )
+                reply_markup=kb,
+                disable_web_page_preview=True
+            )
         except TelegramBadRequest:
             pass
 
-    @user_router.callback_query(F.data == "howto_ios")
+    @user_router.callback_query(F.data.startswith("howto_ios"))
     @registration_required
     async def howto_ios_handler(callback: types.CallbackQuery):
         await callback.answer()
+        kb = _get_howto_keyboard(callback.data)
         try:
             await callback.message.edit_text(
                 (get_setting("howto_ios_text") or (
@@ -1529,16 +1646,17 @@ def get_user_router() -> Router:
                     "5. <b>Подключитесь к VPN:</b> Включите главный переключатель в V2RayTun. Возможно, потребуется разрешить создание VPN-подключения.\n"
                     "6. <b>Проверьте подключение:</b> После подключения проверьте свой IP-адрес, например, на https://whatismyipaddress.com/. Он должен отличаться от вашего реального IP."
                 )),
-            reply_markup=keyboards.create_howto_vless_keyboard(),
-            disable_web_page_preview=True
-        )
+                reply_markup=kb,
+                disable_web_page_preview=True
+            )
         except TelegramBadRequest:
             pass
 
-    @user_router.callback_query(F.data == "howto_windows")
+    @user_router.callback_query(F.data.startswith("howto_windows"))
     @registration_required
     async def howto_windows_handler(callback: types.CallbackQuery):
         await callback.answer()
+        kb = _get_howto_keyboard(callback.data)
         try:
             await callback.message.edit_text(
                 (get_setting("howto_windows_text") or (
@@ -1557,16 +1675,40 @@ def get_user_router() -> Router:
                     "9. <b>Подключитесь к VPN:</b> Нажмите «Подключить» (Connect).\n"
                     "10. <b>Проверьте подключение:</b> Откройте браузер и проверьте IP на https://whatismyipaddress.com/. Он должен отличаться от вашего реального IP."
                 )),
-            reply_markup=keyboards.create_howto_vless_keyboard(),
-            disable_web_page_preview=True
-        )
+                reply_markup=kb,
+                disable_web_page_preview=True
+            )
         except TelegramBadRequest:
             pass
 
-    @user_router.callback_query(F.data == "howto_linux")
+    @user_router.callback_query(F.data.startswith("howto_macos"))
+    @registration_required
+    async def howto_macos_handler(callback: types.CallbackQuery):
+        await callback.answer()
+        kb = _get_howto_keyboard(callback.data)
+        try:
+            await callback.message.edit_text(
+                (get_setting("howto_macos_text") or (
+                    "<b>Подключение на macOS</b>\n\n"
+                    "1. <b>Установите приложение FoXray:</b> Загрузите FoXray или V2box из Mac App Store.\n"
+                    "2. <b>Скопируйте свой ключ (vless://):</b> Перейдите в раздел «Моя подписка» в нашем боте и скопируйте свой ключ.\n"
+                    "3. <b>Импортируйте конфигурацию:</b>\n"
+                    "   • Откройте приложение.\n"
+                    "   • Нажмите значок + или «Import from clipboard».\n"
+                    "4. <b>Подключитесь к VPN:</b> Выберите сервер и нажмите кнопку подключения.\n"
+                    "5. <b>Проверьте подключение:</b> Откройте браузер и проверьте IP на https://whatismyipaddress.com/. Он должен отличаться от вашего реального IP."
+                )),
+                reply_markup=kb,
+                disable_web_page_preview=True
+            )
+        except TelegramBadRequest:
+            pass
+
+    @user_router.callback_query(F.data.startswith("howto_linux"))
     @registration_required
     async def howto_linux_handler(callback: types.CallbackQuery):
         await callback.answer()
+        kb = _get_howto_keyboard(callback.data)
         try:
             await callback.message.edit_text(
                 (get_setting("howto_linux_text") or (
@@ -1584,9 +1726,9 @@ def get_user_router() -> Router:
                     "8. <b>Подключитесь к VPN:</b> Нажмите «Подключить» (Connect).\n"
                     "9. <b>Проверьте подключение:</b> Откройте браузер и проверьте IP на https://whatismyipaddress.com/. Он должен отличаться от вашего реального IP."
                 )),
-            reply_markup=keyboards.create_howto_vless_keyboard(),
-            disable_web_page_preview=True
-        )
+                reply_markup=kb,
+                disable_web_page_preview=True
+            )
         except TelegramBadRequest:
             pass
 
@@ -2393,6 +2535,112 @@ def get_user_router() -> Router:
             return
         await process_successful_payment(bot, metadata)
 
+    @user_router.message(Command("traffic_stats"))
+    async def traffic_stats_handler(message: types.Message):
+        if not is_admin(message.from_user.id):
+            return
+        stats = get_traffic_sources_stats()
+        if not stats:
+            await message.answer("📊 Статистика источников трафика пока пуста.")
+            return
+
+        lines = ["📊 <b>Статистика источников трафика (Радар / Диплинки):</b>\n"]
+        total_clicks = 0
+        total_trials = 0
+        total_sales = 0
+        total_income = 0.0
+
+        for s in stats:
+            tag = s.get('source_tag')
+            clicks = s.get('clicks_count', 0)
+            trials = s.get('trials_count', 0)
+            sales = s.get('sales_count', 0)
+            income = float(s.get('total_income', 0.0) or 0.0)
+            desc = s.get('description', '')
+
+            total_clicks += clicks
+            total_trials += trials
+            total_sales += sales
+            total_income += income
+
+            cr_trial = (trials / clicks * 100) if clicks > 0 else 0.0
+            cr_sale = (sales / clicks * 100) if clicks > 0 else 0.0
+
+            lines.append(
+                f"🏷 <code>{tag}</code> ({desc})\n"
+                f"  • Переходы: <b>{clicks}</b>\n"
+                f"  • Триалы: <b>{trials}</b> (CR: {cr_trial:.1f}%)\n"
+                f"  • Продажи: <b>{sales}</b> (CR: {cr_sale:.1f}%)\n"
+                f"  • Выручка: <b>{income:.2f} RUB</b>\n"
+            )
+
+        cr_total_trial = (total_trials / total_clicks * 100) if total_clicks > 0 else 0.0
+        cr_total_sale = (total_sales / total_clicks * 100) if total_clicks > 0 else 0.0
+        lines.append(
+            f"📈 <b>ИТОГО:</b>\n"
+            f"  • Переходов: <b>{total_clicks}</b>\n"
+            f"  • Триалов: <b>{total_trials}</b> (CR: {cr_total_trial:.1f}%)\n"
+            f"  • Продаж: <b>{total_sales}</b> (CR: {cr_total_sale:.1f}%)\n"
+            f"  • Выручка: <b>{total_income:.2f} RUB</b>"
+        )
+
+        await message.answer("\n".join(lines), parse_mode="HTML")
+
+    @user_router.message(F.text, StateFilter(None))
+    async def first_contact_ai_autoresponder(message: types.Message, state: FSMContext, bot: Bot):
+        # Игнорируем команды
+        if message.text and message.text.startswith("/"):
+            return
+
+        user_id = message.from_user.id
+        user_data = get_user(user_id)
+        if not user_data:
+            return
+
+        last_start = get_user_last_start(user_id)
+        now_ts = int(datetime.now().timestamp())
+
+        # Если сообщение в пределах 15 минут (900 секунд) после /start
+        if last_start and (now_ts - last_start) <= 900:
+            question = message.text.strip()
+            if not question:
+                return
+
+            user_name = message.from_user.first_name or message.from_user.username or "пользователь"
+            tag = user_data.get('acquisition_source') or "organic"
+
+            # AI генерация ответа через OpenRouter с мгновенным fallback
+            answer_text = await ai_onboarding.handle_user_question(
+                question=question,
+                user_name=user_name,
+                tag=tag,
+            )
+
+            # Формируем инлайн-клавиатуру
+            trial_available = not (user_data.get('trial_used') or user_data.get('trial_granted'))
+            trial_enabled = (get_setting("trial_enabled") or "true").strip().lower() == "true"
+            support_bot = (get_setting("support_bot_username") or "neovpn_supportbot").strip().lstrip("@")
+
+            builder = InlineKeyboardBuilder()
+            if trial_available and trial_enabled:
+                trial_btn_text = get_setting("btn_try") or "🎁 Забрать 3 дня теста"
+                builder.button(text=trial_btn_text, callback_data="get_trial")
+            builder.button(text="📖 Инструкция по подключению", callback_data="howto_vless")
+            builder.button(text="💬 Написать в техподдержку", url=f"https://t.me/{support_bot}")
+            builder.adjust(1)
+
+            try:
+                await message.answer(answer_text, reply_markup=builder.as_markup(), disable_web_page_preview=True)
+            except TelegramBadRequest as e:
+                if "can't parse entities" in str(e).lower():
+                    plain = re.sub(r'<[^>]+>', '', answer_text)
+                    await message.answer(plain, reply_markup=builder.as_markup(), disable_web_page_preview=True)
+                else:
+                    raise
+        else:
+            # Вне 15-минутного окна показываем главное меню
+            await show_main_menu(message)
+
     return user_router
 
 async def _create_heleket_payment_request(
@@ -2803,6 +3051,10 @@ async def process_successful_payment(bot: Bot, metadata: dict):
             except Exception:
                 pass
             if ok:
+                try:
+                    record_paid_conversion(user_id, float(price))
+                except Exception as e:
+                    logger.warning(f"Failed to record paid conversion for top_up: {e}")
                 await bot.send_message(
                     chat_id=user_id,
                     text=(
@@ -2953,6 +3205,11 @@ async def process_successful_payment(bot: Bot, metadata: dict):
             pm_lower = ''
         spent_for_stats = 0.0 if pm_lower == 'balance' else float(price)
         update_user_stats(user_id, spent_for_stats, months)
+        if spent_for_stats > 0:
+            try:
+                record_paid_conversion(user_id, spent_for_stats)
+            except Exception as e:
+                logger.warning(f"Failed to record paid conversion for key: {e}")
         
         user_info = get_user(user_id)
 
