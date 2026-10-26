@@ -34,7 +34,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import html as py_html
 
 from shop_bot.bot import keyboards
-from shop_bot.modules import xui_api
+from shop_bot.modules import xui_api, aaio_payment, cryptomus_payment
 from shop_bot.services import ai_onboarding
 from shop_bot.data_manager.database import (
     get_user, add_new_key, get_user_keys, update_user_stats,
@@ -63,7 +63,11 @@ from shop_bot.data_manager.database import (
     get_traffic_sources_stats,
     get_user_last_start,
     update_user_last_start,
+    get_user_preferred_currency,
+    set_user_preferred_currency,
+    get_transaction_by_provider_payment_id,
 )
+from shop_bot.services import currency_service
 from shop_bot.config import (
     CHOOSE_PLAN_MESSAGE,
     CHOOSE_PAYMENT_METHOD_MESSAGE,
@@ -183,26 +187,21 @@ def get_user_router() -> Router:
     user_router = Router()
 
     # Helpers for Telegram Stars
-    def _get_stars_rate() -> Decimal:
+    def _calc_stars_amount(amount_usd: Decimal) -> int:
         try:
-            rate_raw = get_setting("stars_per_rub") or "1"
-            rate = Decimal(str(rate_raw))
-            if rate <= 0:
-                rate = Decimal("1")
-            return rate
+            rate_usd_str = get_setting("stars_rate_usd") or "0.02"
+            rate_usd = Decimal(str(rate_usd_str))
+            if rate_usd > 0:
+                stars = (amount_usd / rate_usd).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                return max(1, int(stars))
         except Exception:
-            return Decimal("1")
-
-    def _calc_stars_amount(amount_rub: Decimal) -> int:
-        rate = _get_stars_rate()
+            pass
         try:
-            stars = (amount_rub * rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            rate_rub = Decimal(str(get_setting("stars_per_rub") or "1"))
+            stars = (amount_usd * rate_rub).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+            return max(1, int(stars))
         except Exception:
-            stars = (amount_rub * rate)
-        try:
-            return int(stars)
-        except Exception:
-            return int(float(stars))
+            return max(1, int(float(amount_usd)))
 
     @user_router.message(CommandStart())
     async def start_handler(message: types.Message, state: FSMContext, bot: Bot, command: CommandObject):
@@ -445,6 +444,7 @@ def get_user_router() -> Router:
         if not user_db_data:
             await callback.answer("Не удалось получить данные профиля.", show_alert=True)
             return
+        preferred_curr = get_user_preferred_currency(user_id)
         username = html.bold(user_db_data.get('username', 'Пользователь'))
         total_spent, total_months = user_db_data.get('total_spent', 0), user_db_data.get('total_months', 0)
         now = datetime.now()
@@ -457,12 +457,13 @@ def get_user_router() -> Router:
         elif user_keys: vpn_status_text = VPN_INACTIVE_TEXT
         else: vpn_status_text = VPN_NO_DATA_TEXT
         final_text = get_profile_text(username, total_spent, total_months, vpn_status_text)
-        # Баланс: основной + реферальные метрики
+        # Баланс: основной + реферальные метрики в валюте пользователя
         try:
             main_balance = get_balance(user_id)
         except Exception:
             main_balance = 0.0
-        final_text += f"\n\n💼 <b>Основной баланс:</b> {main_balance:.0f} RUB"
+        formatted_balance = currency_service.format_price(main_balance, preferred_curr)
+        final_text += f"\n\n💼 <b>Основной баланс:</b> {formatted_balance}"
         # Реферальная информация
         try:
             referral_count = get_referral_count(user_id)
@@ -472,11 +473,24 @@ def get_user_router() -> Router:
             total_ref_earned = float(get_referral_balance_all(user_id))
         except Exception:
             total_ref_earned = 0.0
+        formatted_ref = currency_service.format_price(total_ref_earned, preferred_curr)
         final_text += (
             f"\n🤝 <b>Рефералы:</b> {referral_count}"
-            f"\n💰 <b>Заработано по рефералке (всего):</b> {total_ref_earned:.2f} RUB"
+            f"\n💰 <b>Заработано по рефералке (всего):</b> {formatted_ref}"
         )
-        await callback.message.edit_text(final_text, reply_markup=keyboards.create_profile_keyboard())
+        await callback.message.edit_text(final_text, reply_markup=keyboards.create_profile_keyboard(preferred_currency=preferred_curr))
+
+    @user_router.callback_query(F.data.startswith("set_currency_"))
+    @registration_required
+    async def set_currency_callback(callback: types.CallbackQuery):
+        user_id = callback.from_user.id
+        new_curr = callback.data.replace("set_currency_", "").strip().upper()
+        if new_curr in ["USD", "EUR", "UAH", "RUB", "KZT"]:
+            set_user_preferred_currency(user_id, new_curr)
+            await callback.answer(f"Валюта переключена на {new_curr}")
+            await profile_handler_callback(callback)
+        else:
+            await callback.answer("Неизвестная валюта", show_alert=True)
 
     @user_router.callback_query(F.data == "profile_info")
     @registration_required
@@ -485,6 +499,7 @@ def get_user_router() -> Router:
         user_id = callback.from_user.id
         user_db_data = get_user(user_id)
         user_keys = get_user_keys(user_id)
+        preferred_curr = get_user_preferred_currency(user_id)
         
         if not user_db_data:
             await callback.answer("Не удалось получить данные профиля.", show_alert=True)
@@ -508,12 +523,13 @@ def get_user_router() -> Router:
             vpn_status_text = VPN_NO_DATA_TEXT
             
         final_text = get_profile_text(username, total_spent, total_months, vpn_status_text)
+        formatted_spent = currency_service.format_price(total_spent, preferred_curr)
         
         # Добавляем дополнительную информацию
         final_text += f"\n\n📊 <b>Статистика:</b>"
         final_text += f"\n🔑 <b>Всего ключей:</b> {len(user_keys)}"
         final_text += f"\n✅ <b>Активных ключей:</b> {len(active_keys)}"
-        final_text += f"\n💸 <b>Потрачено всего:</b> {total_spent:.2f} RUB"
+        final_text += f"\n💸 <b>Потрачено всего:</b> {formatted_spent}"
         final_text += f"\n📅 <b>Месяцев подписки:</b> {total_months}"
         
         builder = InlineKeyboardBuilder()
@@ -525,6 +541,7 @@ def get_user_router() -> Router:
     async def profile_balance_handler(callback: types.CallbackQuery):
         await callback.answer()
         user_id = callback.from_user.id
+        preferred_curr = get_user_preferred_currency(user_id)
         
         try:
             main_balance = get_balance(user_id)
@@ -546,10 +563,14 @@ def get_user_router() -> Router:
         except Exception:
             ref_balance = 0.0
         
+        formatted_main = currency_service.format_price(main_balance, preferred_curr)
+        formatted_ref_bal = currency_service.format_price(ref_balance, preferred_curr)
+        formatted_ref_earned = currency_service.format_price(total_ref_earned, preferred_curr)
+
         text = f"💰 <b>Информация о балансе</b>\n\n"
-        text += f"💼 <b>Основной баланс:</b> {main_balance:.2f} RUB\n"
-        text += f"🤝 <b>Реферальный баланс:</b> {ref_balance:.2f} RUB\n"
-        text += f"📊 <b>Всего заработано по рефералке:</b> {total_ref_earned:.2f} RUB\n"
+        text += f"💼 <b>Основной баланс:</b> {formatted_main}\n"
+        text += f"🤝 <b>Реферальный баланс:</b> {formatted_ref_bal}\n"
+        text += f"📊 <b>Всего заработано по рефералке:</b> {formatted_ref_earned}\n"
         text += f"👥 <b>Приглашено пользователей:</b> {referral_count}\n\n"
         text += f"💡 <b>Совет:</b> Используйте реферальный баланс для покупки ключей!"
         
@@ -823,6 +844,110 @@ def get_user_router() -> Router:
         except Exception as e:
             logger.error(f"Не удалось создать счет для пополнения: {e}", exc_info=True)
             await callback.message.edit_text("❌ Не удалось создать счёт. Попробуйте другой способ оплаты.")
+            await state.clear()
+
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_aaio")
+    async def topup_pay_aaio_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт Aaio...")
+        data = await state.get_data()
+        user_id = callback.from_user.id
+        amount = float(data.get('topup_amount', 0))
+        if amount <= 0:
+            await callback.message.edit_text("❌ Некорректная сумма пополнения. Повторите ввод.")
+            await state.clear()
+            return
+
+        order_id = str(uuid.uuid4())
+        user_currency = get_user_preferred_currency(user_id)
+        amount_usd = float(currency_service.convert_to_usd(amount, "RUB"))
+        aaio_currency = user_currency if user_currency in ["RUB", "UAH", "EUR", "USD"] else "RUB"
+
+        metadata = {
+            "payment_id": order_id,
+            "user_id": user_id,
+            "price": amount,
+            "action": "top_up",
+            "payment_method": "Aaio",
+        }
+        create_pending_transaction(
+            payment_id=order_id,
+            user_id=user_id,
+            amount_rub=amount,
+            metadata=metadata,
+            provider="aaio",
+            provider_payment_id=order_id,
+            amount_usd=amount_usd,
+            currency_name=aaio_currency,
+            amount_currency=float(currency_service.convert_from_usd(amount_usd, aaio_currency))
+        )
+
+        pay_url = aaio_payment.create_aaio_payment_url(
+            order_id=order_id,
+            amount_usd=amount_usd,
+            currency=aaio_currency,
+            desc=f"Пополнение баланса #{user_id}",
+        )
+        if pay_url:
+            await callback.message.edit_text(
+                "Нажмите на кнопку ниже для перехода к оплате через Aaio:",
+                reply_markup=keyboards.create_payment_with_check_keyboard(
+                    payment_url=pay_url,
+                    check_callback=f"check_payment_aaio_{order_id}"
+                )
+            )
+            await state.clear()
+        else:
+            await callback.message.edit_text("❌ Не удалось создать счёт Aaio. Проверьте настройки шлюза.")
+            await state.clear()
+
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_cryptomus")
+    async def topup_pay_cryptomus_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт Cryptomus...")
+        data = await state.get_data()
+        user_id = callback.from_user.id
+        amount = float(data.get('topup_amount', 0))
+        if amount <= 0:
+            await callback.message.edit_text("❌ Некорректная сумма пополнения. Повторите ввод.")
+            await state.clear()
+            return
+
+        order_id = str(uuid.uuid4())
+        amount_usd = float(currency_service.convert_to_usd(amount, "RUB"))
+        metadata = {
+            "payment_id": order_id,
+            "user_id": user_id,
+            "price": amount,
+            "action": "top_up",
+            "payment_method": "Cryptomus",
+        }
+        create_pending_transaction(
+            payment_id=order_id,
+            user_id=user_id,
+            amount_rub=amount,
+            metadata=metadata,
+            provider="cryptomus",
+            provider_payment_id=order_id,
+            amount_usd=amount_usd,
+            currency_name="USD",
+            amount_currency=amount_usd
+        )
+
+        pay_url, uuid_val = await asyncio.to_thread(
+            cryptomus_payment.create_cryptomus_invoice,
+            order_id=order_id,
+            amount_usd=amount_usd
+        )
+        if pay_url:
+            await callback.message.edit_text(
+                "Нажмите на кнопку ниже для оплаты криптовалютой через Cryptomus:",
+                reply_markup=keyboards.create_payment_with_check_keyboard(
+                    payment_url=pay_url,
+                    check_callback=f"check_payment_cryptomus_{order_id}"
+                )
+            )
+            await state.clear()
+        else:
+            await callback.message.edit_text("❌ Не удалось создать счёт Cryptomus. Проверьте настройки шлюза.")
             await state.clear()
 
     @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_tonconnect")
@@ -1222,7 +1347,12 @@ def get_user_router() -> Router:
                 return
             await callback.message.edit_text(
                 CHOOSE_PLAN_MESSAGE or "Выберите тариф:",
-                reply_markup=keyboards.create_plans_keyboard(plans, action="new", host_name=host_name)
+                reply_markup=keyboards.create_plans_keyboard(
+                    plans,
+                    action="new",
+                    host_name=host_name,
+                    currency=get_user_preferred_currency(callback.from_user.id)
+                )
             )
             return
 
@@ -1782,7 +1912,8 @@ def get_user_router() -> Router:
                 plans=plans,
                 action="extend",
                 host_name=host_name,
-                key_id=key_id
+                key_id=key_id,
+                currency=get_user_preferred_currency(callback.from_user.id)
             )
         )
 
@@ -1830,7 +1961,8 @@ def get_user_router() -> Router:
                             plans=plans,
                             action="extend",
                             host_name=host_name,
-                            key_id=int(key_id)
+                            key_id=int(key_id),
+                            currency=get_user_preferred_currency(callback.from_user.id)
                         )
                     )
                 else:
@@ -1845,7 +1977,8 @@ def get_user_router() -> Router:
                         reply_markup=keyboards.create_plans_keyboard(
                             plans=plans,
                             action="new",
-                            host_name=host_name
+                            host_name=host_name,
+                            currency=get_user_preferred_currency(callback.from_user.id)
                         )
                     )
                 else:
@@ -1903,6 +2036,7 @@ def get_user_router() -> Router:
             await state.clear()
             return
         
+        preferred_curr = get_user_preferred_currency(message.chat.id)
         price = Decimal(str(plan['price']))
         final_price = price
         message_text = CHOOSE_PAYMENT_METHOD_MESSAGE
@@ -1915,10 +2049,12 @@ def get_user_router() -> Router:
                 discount_amount = (price * discount_percentage / 100).quantize(Decimal("0.01"))
                 final_price = price - discount_amount
 
+                old_price_str = currency_service.format_price(float(price), preferred_curr)
+                new_price_str = currency_service.format_price(float(final_price), preferred_curr)
                 message_text = (
                     f"🎉 Как приглашенному пользователю, на вашу первую покупку предоставляется скидка {discount_percentage_str}%!\n"
-                    f"Старая цена: <s>{price:.2f} RUB</s>\n"
-                    f"<b>Новая цена: {final_price:.2f} RUB</b>\n\n"
+                    f"Старая цена: <s>{old_price_str}</s>\n"
+                    f"<b>Новая цена: {new_price_str}</b>\n\n"
                 ) + CHOOSE_PAYMENT_METHOD_MESSAGE
 
         # Промокод (если уже применён)
@@ -1943,13 +2079,17 @@ def get_user_router() -> Router:
                 if promo_percent:
                     promo_line += f"скидка {Decimal(str(promo_percent)):.0f}%\n"
                 elif promo_amount:
-                    promo_line += f"скидка {Decimal(str(promo_amount)):.2f} RUB\n"
+                    amt_str = currency_service.format_price(float(promo_amount), preferred_curr)
+                    promo_line += f"скидка {amt_str}\n"
                 else:
                     promo_line += "применён\n"
+                
+                old_p = currency_service.format_price(float(price), preferred_curr)
+                new_p = currency_service.format_price(float(final_price), preferred_curr)
                 message_text = (
                     (f"{promo_line}"
-                     f"Старая цена: <s>{price:.2f} RUB</s>\n"
-                     f"<b>Новая цена: {final_price:.2f} RUB</b>\n\n")
+                     f"Старая цена: <s>{old_p}</s>\n"
+                     f"<b>Новая цена: {new_p}</b>\n\n")
                     + message_text
                 )
             except Exception:
@@ -1965,32 +2105,21 @@ def get_user_router() -> Router:
 
         show_balance_btn = main_balance >= float(final_price)
 
+        keyboard = keyboards.create_payment_method_keyboard(
+            payment_methods=PAYMENT_METHODS,
+            action=data.get('action'),
+            key_id=data.get('key_id'),
+            show_balance=show_balance_btn,
+            main_balance=main_balance,
+            price=float(final_price),
+            has_promo_applied=bool(promo_code),
+            currency=preferred_curr
+        )
+
         try:
-            await message.edit_text(
-                message_text,
-                reply_markup=keyboards.create_payment_method_keyboard(
-                    payment_methods=PAYMENT_METHODS,
-                    action=data.get('action'),
-                    key_id=data.get('key_id'),
-                    show_balance=show_balance_btn,
-                    main_balance=main_balance,
-                    price=float(final_price),
-                    has_promo_applied=bool(promo_code)
-                )
-            )
+            await message.edit_text(message_text, reply_markup=keyboard)
         except TelegramBadRequest:
-            await message.answer(
-                message_text,
-                reply_markup=keyboards.create_payment_method_keyboard(
-                    payment_methods=PAYMENT_METHODS,
-                    action=data.get('action'),
-                    key_id=data.get('key_id'),
-                    show_balance=show_balance_btn,
-                    main_balance=main_balance,
-                    price=float(final_price),
-                    has_promo_applied=bool(promo_code)
-                )
-            )
+            await message.answer(message_text, reply_markup=keyboard)
         await state.set_state(PaymentProcess.waiting_for_payment_method)
         
     @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "back_to_email_prompt")
@@ -2483,6 +2612,170 @@ def get_user_router() -> Router:
 
         await state.clear()
         await process_successful_payment(bot, metadata)
+
+    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_aaio")
+    async def create_aaio_payment_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю ссылку на оплату через Aaio...")
+        data = await state.get_data()
+        user_id = callback.from_user.id
+        plan = get_plan_by_id(data.get('plan_id'))
+        if not plan:
+            await callback.message.edit_text("❌ Произошла ошибка при выборе тарифа.")
+            await state.clear()
+            return
+
+        final_price_usd = float(data.get('final_price', plan['price']))
+        order_id = str(uuid.uuid4())
+        user_curr = get_user_preferred_currency(user_id)
+        aaio_currency = user_curr if user_curr in ["RUB", "UAH", "EUR", "USD"] else "RUB"
+        customer_email = data.get('customer_email') or get_setting("receipt_email")
+
+        metadata = {
+            "payment_id": order_id,
+            "user_id": user_id,
+            "months": int(plan['months']),
+            "price": final_price_usd,
+            "action": data.get('action'),
+            "key_id": data.get('key_id'),
+            "host_name": data.get('host_name'),
+            "plan_id": data.get('plan_id'),
+            "customer_email": customer_email,
+            "payment_method": "Aaio",
+            "promo_code": data.get('promo_code'),
+            "promo_discount_percent": data.get('promo_discount_percent'),
+            "promo_discount_amount": data.get('promo_discount_amount'),
+        }
+
+        try:
+            create_pending_transaction(
+                payment_id=order_id,
+                user_id=user_id,
+                amount_rub=float(currency_service.convert_from_usd(final_price_usd, "RUB")),
+                metadata=metadata,
+                provider="aaio",
+                provider_payment_id=order_id,
+                amount_usd=final_price_usd,
+                exchange_rate=float(currency_service.get_rate("USD", aaio_currency) or 1.0),
+                currency_name=aaio_currency,
+                amount_currency=float(currency_service.convert_from_usd(final_price_usd, aaio_currency))
+            )
+        except Exception as e:
+            logger.warning(f"Aaio: не удалось создать pending-транзакцию: {e}")
+
+        pay_url = aaio_payment.create_aaio_payment_url(
+            order_id=order_id,
+            amount_usd=final_price_usd,
+            currency=aaio_currency,
+            desc=f"Оплата VPN ({plan['months']} мес.)",
+            email=customer_email
+        )
+
+        if pay_url:
+            await callback.message.edit_text(
+                "Нажмите кнопку ниже для оплаты банковской картой или СБП (Aaio):",
+                reply_markup=keyboards.create_payment_with_check_keyboard(
+                    payment_url=pay_url,
+                    check_callback=f"check_payment_aaio_{order_id}"
+                )
+            )
+            await state.clear()
+        else:
+            await callback.message.edit_text("❌ Не удалось создать счёт Aaio. Попробуйте другой способ оплаты.")
+            await state.clear()
+
+    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_cryptomus")
+    async def create_cryptomus_payment_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт в Cryptomus...")
+        data = await state.get_data()
+        user_id = callback.from_user.id
+        plan = get_plan_by_id(data.get('plan_id'))
+        if not plan:
+            await callback.message.edit_text("❌ Произошла ошибка при выборе тарифа.")
+            await state.clear()
+            return
+
+        final_price_usd = float(data.get('final_price', plan['price']))
+        order_id = str(uuid.uuid4())
+        customer_email = data.get('customer_email') or get_setting("receipt_email")
+
+        metadata = {
+            "payment_id": order_id,
+            "user_id": user_id,
+            "months": int(plan['months']),
+            "price": final_price_usd,
+            "action": data.get('action'),
+            "key_id": data.get('key_id'),
+            "host_name": data.get('host_name'),
+            "plan_id": data.get('plan_id'),
+            "customer_email": customer_email,
+            "payment_method": "Cryptomus",
+            "promo_code": data.get('promo_code'),
+            "promo_discount_percent": data.get('promo_discount_percent'),
+            "promo_discount_amount": data.get('promo_discount_amount'),
+        }
+
+        try:
+            create_pending_transaction(
+                payment_id=order_id,
+                user_id=user_id,
+                amount_rub=float(currency_service.convert_from_usd(final_price_usd, "RUB")),
+                metadata=metadata,
+                provider="cryptomus",
+                provider_payment_id=order_id,
+                amount_usd=final_price_usd,
+                exchange_rate=1.0,
+                currency_name="USD",
+                amount_currency=final_price_usd
+            )
+        except Exception as e:
+            logger.warning(f"Cryptomus: не удалось создать pending-транзакцию: {e}")
+
+        pay_url, uuid_val = await asyncio.to_thread(
+            cryptomus_payment.create_cryptomus_invoice,
+            order_id=order_id,
+            amount_usd=final_price_usd
+        )
+
+        if pay_url:
+            await callback.message.edit_text(
+                "Нажмите кнопку ниже для оплаты криптовалютой через Cryptomus:",
+                reply_markup=keyboards.create_payment_with_check_keyboard(
+                    payment_url=pay_url,
+                    check_callback=f"check_payment_cryptomus_{order_id}"
+                )
+            )
+            await state.clear()
+        else:
+            await callback.message.edit_text("❌ Не удалось создать счёт Cryptomus. Попробуйте другой способ оплаты.")
+            await state.clear()
+
+    @user_router.callback_query(F.data.startswith("check_payment_aaio_") | F.data.startswith("check_payment_cryptomus_"))
+    async def check_provider_payment_callback(callback: types.CallbackQuery, bot: Bot):
+        await callback.answer("Проверяю статус оплаты...")
+        parts = callback.data.split("_")
+        provider = parts[2]
+        order_id = "_".join(parts[3:])
+
+        tx = get_transaction_by_provider_payment_id(order_id)
+        if tx and tx.get("status") == "paid":
+            await callback.message.edit_text("✅ Оплата подтверждена! Обработка уже выполнена.")
+            return
+
+        if provider == "cryptomus":
+            res = await asyncio.to_thread(cryptomus_payment.check_cryptomus_payment_status, order_id=order_id)
+            status = res.get("result", {}).get("status")
+            if status in ["paid", "paid_over"]:
+                tx_completed = find_and_complete_pending_transaction(
+                    payment_id=order_id,
+                    amount_rub=None,
+                    payment_method="Cryptomus"
+                )
+                if tx_completed:
+                    await process_successful_payment(bot, tx_completed)
+                    await callback.message.edit_text("✅ Оплата успешно получена и активирована!")
+                    return
+
+        await callback.answer("⏳ Оплата ещё обрабатывается. Если вы уже оплатили, подождите 1-2 минуты.", show_alert=True)
 
     # Telegram Payments: подтверждаем pre_checkout
     @user_router.pre_checkout_query()
@@ -3359,7 +3652,7 @@ async def process_successful_payment(bot: Bot, metadata: dict):
         await bot.send_message(
             chat_id=user_id,
             text=final_text,
-            reply_markup=keyboards.create_key_info_keyboard(key_id)
+            reply_markup=keyboards.create_howto_vless_keyboard_key(key_id)
         )
 
         try:

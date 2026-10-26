@@ -169,25 +169,25 @@
                 <tbody>
                     <tr>
                         <td><span class="badge bg-dark text-white font-monospace">22 / tcp</span></td>
-                        <td>Стандартный порт OpenSSH</td>
+                        <td>Стандартный SSH (Блокирован, Trap-порт)</td>
                         <td>Массовый брутфорс ботнетами и сканерами</td>
-                        <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Блокирован (Заменён на кастомный)</span></td>
+                        <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Стандартный SSH (Блокирован, Trap-порт)</span></td>
                     </tr>
                     <tr>
                         <td><span class="badge bg-dark text-white font-monospace">2096 / tcp</span></td>
-                        <td>Служебный порт подписок 3X-UI</td>
+                        <td>Внутренний порт подписок 3X-UI</td>
                         <td>Утечка конфигурации подписки в обход прокси</td>
-                        <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Блокирован от внешнего мира</span></td>
+                        <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Блокирован (Изолирован, прокси через 443)</span></td>
                     </tr>
                     <tr>
                         <td><span class="badge bg-dark text-white font-monospace">1488 / tcp</span></td>
-                        <td>Локальный Flask-сервер вебхуков бота</td>
+                        <td>Внутренний Flask backend</td>
                         <td>Прямой доступ к панели без Nginx/SSL</td>
-                        <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Изолирован (Только 127.0.0.1)</span></td>
+                        <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Изолирован (Только внутри Docker)</span></td>
                     </tr>
                     <tr>
                         <td><span class="badge bg-dark text-white font-monospace">8085 / tcp</span></td>
-                        <td>Внутренний fallback заглушки Nginx</td>
+                        <td>Nginx internal fallback</td>
                         <td>Раскрытие служебных страниц веб-сервера</td>
                         <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Блокирован снаружи</span></td>
                     </tr>
@@ -214,34 +214,34 @@
                             <tr>
                                 <th>Порт / Протокол</th>
                                 <th>Сервис / Служба</th>
-                                <th>Назначение</th>
+                                <th>Роль и описание сервиса</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr>
-                                <td><span class="badge bg-primary-lt font-monospace">{{ audit_data.ssh_port or 22 }} / tcp</span></td>
-                                <td>Кастомный SSH</td>
-                                <td>Безопасное удаленное администрирование</td>
+                                <td><span class="badge bg-primary-lt font-monospace">{{ audit_data.ssh_port or 10022 }} / tcp</span></td>
+                                <td>Кастомный порт SSH</td>
+                                <td>Кастомный порт SSH (Защищённое администрирование)</td>
                             </tr>
                             <tr>
                                 <td><span class="badge bg-blue-lt font-monospace">80 / tcp</span></td>
-                                <td>HTTP</td>
-                                <td>Выпуск SSL-сертификатов Let's Encrypt / ACME</td>
+                                <td>HTTP / ACME Certbot</td>
+                                <td>HTTP / ACME Certbot (Выпуск SSL Let's Encrypt)</td>
                             </tr>
                             <tr>
                                 <td><span class="badge bg-green-lt font-monospace">443 / tcp & udp</span></td>
-                                <td>HTTPS / VLESS / QUIC</td>
-                                <td>Основной прокси VLESS Reality и Hysteria2</td>
+                                <td>VLESS Reality / Hysteria2 / Subscriptions</td>
+                                <td>VLESS Reality / Hysteria2 / Subscriptions</td>
                             </tr>
                             <tr>
                                 <td><span class="badge bg-purple-lt font-monospace">8443 / tcp</span></td>
-                                <td>3X-UI Web Admin</td>
-                                <td>Панель управления узлами Xray</td>
+                                <td>ShopBot Admin & Webhook Gateway</td>
+                                <td>ShopBot Admin & Webhook Gateway (Вход в панель управления и платёжные вебхуки)</td>
                             </tr>
                             <tr>
                                 <td><span class="badge bg-cyan-lt font-monospace">42357 / tcp</span></td>
-                                <td>Special Inbound</td>
-                                <td>Служебный входящий порт подключения</td>
+                                <td>3X-UI Web Panel Core</td>
+                                <td>3X-UI Web Panel Core (Панель управления узлами Xray / внутреннее API)</td>
                             </tr>
                         </tbody>
                     </table>

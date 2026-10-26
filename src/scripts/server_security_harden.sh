@@ -158,30 +158,30 @@ if command -v ufw >/dev/null 2>&1; then
 
     # Whitelist ports
     echo "  -> Whitelisting operational service ports:"
-    echo "     * SSH (${SSH_PORT}/tcp)"
-    $SUDO ufw allow "${SSH_PORT}/tcp" comment "SSH Custom Port" >/dev/null 2>&1 || true
-    echo "     * HTTP (80/tcp)"
-    $SUDO ufw allow 80/tcp comment "HTTP / ACME" >/dev/null 2>&1 || true
-    echo "     * HTTPS & Reality (443/tcp, 443/udp)"
-    $SUDO ufw allow 443/tcp comment "HTTPS / VLESS Reality" >/dev/null 2>&1 || true
-    $SUDO ufw allow 443/udp comment "QUIC / Hysteria2" >/dev/null 2>&1 || true
-    echo "     * 3X-UI Admin (8443/tcp)"
-    $SUDO ufw allow 8443/tcp comment "3X-UI Admin" >/dev/null 2>&1 || true
-    echo "     * Special Inbound (42357/tcp)"
-    $SUDO ufw allow 42357/tcp comment "Special Inbound" >/dev/null 2>&1 || true
+    echo "     * Кастомный порт SSH (${SSH_PORT}/tcp)"
+    $SUDO ufw allow "${SSH_PORT}/tcp" comment "Кастомный порт SSH (Защищённое администрирование)" >/dev/null 2>&1 || true
+    echo "     * HTTP / ACME Certbot (80/tcp)"
+    $SUDO ufw allow 80/tcp comment "HTTP / ACME Certbot (Выпуск SSL Let's Encrypt)" >/dev/null 2>&1 || true
+    echo "     * VLESS Reality / Hysteria2 / Subscriptions (443/tcp, 443/udp)"
+    $SUDO ufw allow 443/tcp comment "VLESS Reality / Hysteria2 / Subscriptions" >/dev/null 2>&1 || true
+    $SUDO ufw allow 443/udp comment "VLESS Reality / Hysteria2 / Subscriptions" >/dev/null 2>&1 || true
+    echo "     * ShopBot Admin & Webhook Gateway (8443/tcp)"
+    $SUDO ufw allow 8443/tcp comment "ShopBot Admin & Webhook Gateway (Вход в панель управления и платёжные вебхуки)" >/dev/null 2>&1 || true
+    echo "     * 3X-UI Web Panel Core (42357/tcp)"
+    $SUDO ufw allow 42357/tcp comment "3X-UI Web Panel Core (Панель управления узлами Xray / внутреннее API)" >/dev/null 2>&1 || true
 
     # Blacklist internal/unprotected ports from direct external access
     echo "  -> Blacklisting unexposed internal sockets:"
     if [[ "$SSH_PORT" != "22" ]]; then
         echo "     * Block default SSH (22/tcp)"
-        $SUDO ufw deny 22/tcp comment "Block Default SSH" >/dev/null 2>&1 || true
+        $SUDO ufw deny 22/tcp comment "Стандартный SSH (Блокирован, Trap-порт)" >/dev/null 2>&1 || true
     fi
     echo "     * Block direct 3X-UI subscriptions (2096)"
-    $SUDO ufw deny 2096 comment "Block Subscriptions Direct" >/dev/null 2>&1 || true
+    $SUDO ufw deny 2096 comment "Внутренний порт подписок 3X-UI" >/dev/null 2>&1 || true
     echo "     * Block internal Webhook/Flask backend (1488)"
-    $SUDO ufw deny 1488 comment "Block Local Webhook Server" >/dev/null 2>&1 || true
+    $SUDO ufw deny 1488 comment "Внутренний Flask backend" >/dev/null 2>&1 || true
     echo "     * Block internal Nginx fallback (8085)"
-    $SUDO ufw deny 8085 comment "Block Nginx Fallback" >/dev/null 2>&1 || true
+    $SUDO ufw deny 8085 comment "Nginx internal fallback" >/dev/null 2>&1 || true
 
     if $SUDO ufw --force enable >/dev/null 2>&1; then
         UFW_ACTIVE=true
@@ -301,18 +301,17 @@ cat <<EOF > "${AUDIT_JSON}"
   "spoofing_protection": ${SYSCTL_APPLIED},
   "ufw_active": ${UFW_ACTIVE},
   "allowed_ports": [
-    "${SSH_PORT}/tcp (SSH)",
-    "80/tcp (HTTP)",
-    "443/tcp (HTTPS/Reality)",
-    "443/udp (QUIC)",
-    "8443/tcp (3X-UI Admin)",
-    "42357/tcp (Special Inbound)"
+    "${SSH_PORT}/tcp (Кастомный порт SSH (Защищённое администрирование))",
+    "80/tcp (HTTP / ACME Certbot (Выпуск SSL Let's Encrypt))",
+    "443/tcp & udp (VLESS Reality / Hysteria2 / Subscriptions)",
+    "8443/tcp (ShopBot Admin & Webhook Gateway (Вход в панель управления и платёжные вебхуки))",
+    "42357/tcp (3X-UI Web Panel Core (Панель управления узлами Xray / внутреннее API))"
   ],
   "blocked_ports": [
-    "22 (Default SSH)",
-    "2096 (Direct Subscriptions)",
-    "1488 (Webhook Server)",
-    "8085 (Nginx Fallback)"
+    "22/tcp (Стандартный SSH (Блокирован, Trap-порт))",
+    "2096/tcp (Внутренний порт подписок 3X-UI)",
+    "1488/tcp (Внутренний Flask backend)",
+    "8085/tcp (Nginx internal fallback)"
   ],
   "fail2ban_active": ${FAIL2BAN_ACTIVE},
   "unattended_upgrades": ${UNATTENDED_UPGRADES},

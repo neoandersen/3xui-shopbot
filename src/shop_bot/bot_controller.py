@@ -112,6 +112,19 @@ class BotController:
             ym_wallet = database.get_setting("yoomoney_wallet")
             yoomoney_enabled = (str(ym_flag).lower() in ("true", "1", "yes", "on")) and bool(ym_wallet)
 
+            # Aaio
+            aaio_flag = database.get_setting("aaio_enabled")
+            aaio_merchant = database.get_setting("aaio_merchant_id")
+            aaio_secret1 = database.get_setting("aaio_secret_1")
+            aaio_secret2 = database.get_setting("aaio_secret_2")
+            aaio_enabled = (str(aaio_flag).lower() in ("true", "1", "yes", "on")) and bool(aaio_merchant and aaio_secret1 and aaio_secret2)
+
+            # Cryptomus
+            cryptomus_flag = database.get_setting("cryptomus_enabled")
+            cryptomus_merchant = database.get_setting("cryptomus_merchant_id")
+            cryptomus_key = database.get_setting("cryptomus_api_key")
+            cryptomus_enabled = (str(cryptomus_flag).lower() in ("true", "1", "yes", "on")) and bool(cryptomus_merchant and cryptomus_key)
+
             if yookassa_enabled:
                 Configuration.account_id = yookassa_shop_id
                 Configuration.secret_key = yookassa_secret_key
@@ -123,6 +136,8 @@ class BotController:
                 "tonconnect": tonconnect_enabled,
                 "stars": stars_enabled,
                 "yoomoney": yoomoney_enabled,
+                "aaio": aaio_enabled,
+                "cryptomus": cryptomus_enabled,
             }
             handlers.TELEGRAM_BOT_USERNAME = bot_username
             handlers.ADMIN_ID = admin_id

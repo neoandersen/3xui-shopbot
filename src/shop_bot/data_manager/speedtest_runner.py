@@ -110,6 +110,50 @@ async def net_probe_for_host(host_row: dict) -> dict:
     return result
 
 
+COMMANDS = [
+    "speedtest --json",
+    "speedtest-cli --json",
+    "/usr/local/bin/speedtest --json",
+    "speedtest --accept-license --accept-gdpr -f json",
+    "speedtest -f json"
+]
+
+
+def _extract_json_from_text(text: str) -> dict | None:
+    """Robustly parse JSON object from text, ignoring surrounding noise/stderr logs."""
+    if not text:
+        return None
+    clean = text.strip()
+    try:
+        data = json.loads(clean)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    
+    # Extract bracketed JSON slice
+    first_brace = clean.find("{")
+    last_brace = clean.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        candidate = clean[first_brace:last_brace + 1]
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+            
+    m = re.search(r"\{.*\}", clean, re.DOTALL)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return None
+
+
 def _ssh_exec_json(ssh: paramiko.SSHClient, commands: list[str]) -> tuple[dict | None, str | None]:
     """Try commands sequentially; expect JSON on stdout. Returns (json_obj, error)."""
     for cmd in commands:
@@ -117,17 +161,9 @@ def _ssh_exec_json(ssh: paramiko.SSHClient, commands: list[str]) -> tuple[dict |
             stdin, stdout, stderr = ssh.exec_command(cmd, timeout=120)
             out = stdout.read().decode('utf-8', errors='ignore')
             err = stderr.read().decode('utf-8', errors='ignore')
-            if out:
-                out = out.strip()
-                # attempt to extract JSON if there is noise
-                m = re.search(r"\{.*\}$", out, re.S)
-                if m:
-                    out = m.group(0)
-                try:
-                    data = json.loads(out)
-                    return data, None
-                except Exception:
-                    pass
+            data = _extract_json_from_text(out)
+            if data:
+                return data, None
             if err:
                 logger.debug(f"SSH cmd error ({cmd}): {err}")
         except Exception as e:
@@ -139,16 +175,23 @@ def _ssh_exec_json(ssh: paramiko.SSHClient, commands: list[str]) -> tuple[dict |
 def _parse_ookla_json(data: dict) -> dict:
     # Ookla CLI JSON format (-f json)
     try:
-        ping_ms = float(data.get('ping', {}).get('latency')) if data.get('ping') else None
-        jitter = float(data.get('ping', {}).get('jitter')) if data.get('ping') else None
+        ping_val = float(data.get('ping', {}).get('latency')) if data.get('ping') else None
+        jitter_val = float(data.get('ping', {}).get('jitter')) if data.get('ping') else None
         down_bps = float(data.get('download', {}).get('bandwidth', 0)) * 8.0  # bytes/s -> bits/s
         up_bps = float(data.get('upload', {}).get('bandwidth', 0)) * 8.0
         server = data.get('server', {})
+        dl_mbps = round(down_bps / 1_000_000.0, 2) if down_bps else None
+        ul_mbps = round(up_bps / 1_000_000.0, 2) if up_bps else None
+        p_ms = round(ping_val, 2) if ping_val is not None else None
+        j_ms = round(jitter_val, 2) if jitter_val is not None else None
         return {
-            'ping_ms': round(ping_ms, 2) if ping_ms is not None else None,
-            'jitter_ms': round(jitter, 2) if jitter is not None else None,
-            'download_mbps': round(down_bps / (1_000_000.0), 2) if down_bps else None,
-            'upload_mbps': round(up_bps / (1_000_000.0), 2) if up_bps else None,
+            'ping_ms': p_ms,
+            'ping': p_ms,
+            'jitter_ms': j_ms,
+            'download_mbps': dl_mbps,
+            'download_speed': dl_mbps,
+            'upload_mbps': ul_mbps,
+            'upload_speed': ul_mbps,
             'server_name': server.get('name'),
             'server_id': str(server.get('id')) if server.get('id') is not None else None,
         }
@@ -157,18 +200,24 @@ def _parse_ookla_json(data: dict) -> dict:
 
 
 def _parse_speedtest_cli_json(data: dict) -> dict:
-    # speedtest-cli (sivel) JSON
+    # speedtest-cli (sivel 2.1.3+) JSON
     try:
-        ping_ms = float(data.get('ping')) if data.get('ping') is not None else None
-        jitter = None
+        ping_val = float(data.get('ping')) if data.get('ping') is not None else None
+        jitter_val = None
         down_bps = float(data.get('download', 0))  # bits per second
         up_bps = float(data.get('upload', 0))
         srv = data.get('server', {})
+        dl_mbps = round(down_bps / 1_000_000.0, 2) if down_bps else None
+        ul_mbps = round(up_bps / 1_000_000.0, 2) if up_bps else None
+        p_ms = round(ping_val, 2) if ping_val is not None else None
         return {
-            'ping_ms': round(ping_ms, 2) if ping_ms is not None else None,
-            'jitter_ms': jitter,
-            'download_mbps': round(down_bps / 1_000_000.0, 2) if down_bps else None,
-            'upload_mbps': round(up_bps / 1_000_000.0, 2) if up_bps else None,
+            'ping_ms': p_ms,
+            'ping': p_ms,
+            'jitter_ms': jitter_val,
+            'download_mbps': dl_mbps,
+            'download_speed': dl_mbps,
+            'upload_mbps': ul_mbps,
+            'upload_speed': ul_mbps,
             'server_name': srv.get('name'),
             'server_id': str(srv.get('id')) if srv.get('id') is not None else None,
         }
@@ -177,16 +226,19 @@ def _parse_speedtest_cli_json(data: dict) -> dict:
 
 
 async def ssh_speedtest_for_host(host_row: dict) -> dict:
-    """Run speedtest on remote host via SSH. Tries Ookla CLI first, then speedtest-cli.
+    """Run speedtest on remote host via SSH using compatibility command list.
     Returns dict with ok, metrics, error.
     """
     result = {
         'ok': False,
         'method': 'ssh',
         'ping_ms': None,
+        'ping': None,
         'jitter_ms': None,
         'download_mbps': None,
+        'download_speed': None,
         'upload_mbps': None,
+        'upload_speed': None,
         'server_name': None,
         'server_id': None,
         'error': None,
@@ -207,23 +259,16 @@ async def ssh_speedtest_for_host(host_row: dict) -> dict:
         pkey = _load_paramiko_pkey(ssh_key_path, ssh_password) if ssh_key_path else None
         ssh.connect(ssh_host, port=ssh_port, username=ssh_user, password=ssh_password, pkey=pkey, timeout=20)
 
-        # Prefer Ookla CLI json format
-        data, err = _ssh_exec_json(ssh, [
-            # Ookla CLI with auto-accept (new flags)
-            'speedtest --accept-license --accept-gdpr -f json',
-            'speedtest --accept-license --accept-gdpr --format=json',
-            # Fallbacks without flags (на случай старых версий, уже принявших лицензию)
-            'speedtest -f json',
-            'speedtest --format=json',
-            # Python speedtest-cli (sivel)
-            'speedtest-cli --json'
-        ])
+        # Run commands list prioritizing speedtest-cli 2.1.3 --json compatibility
+        data, err = _ssh_exec_json(ssh, COMMANDS)
         ssh.close()
         if data:
-            parsed = _parse_ookla_json(data)
-            if not parsed.get('download_mbps') and 'download' in data:
-                # maybe speedtest-cli output
+            if isinstance(data.get('download'), dict) and 'bandwidth' in data['download']:
+                parsed = _parse_ookla_json(data)
+            elif 'download' in data:
                 parsed = _parse_speedtest_cli_json(data)
+            else:
+                parsed = _parse_ookla_json(data) or _parse_speedtest_cli_json(data)
             return {'ok': True, **parsed}
         return {'ok': False, 'error': err or 'unknown'}
 

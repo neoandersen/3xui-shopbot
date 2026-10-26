@@ -119,11 +119,17 @@
 								<label for="host_inbound_id">ID входящего подключения:</label>
 								<input type="number" id="host_inbound_id" name="host_inbound_id" required />
 							</div>
-							<div class="form-group">
-								<label for="host_subscription_url">Ссылка подписки для этого хоста (Обязательно):</label>
-								<input type="text" id="host_subscription_url" name="host_subscription_url" placeholder="например, https://sub.example.com/{token}" />
-								<small>Укажите ссылку на подписку для этого хоста.</small>
+							<div class="row g-2">
+								<div class="col-8">
+									<label for="sub_domain">Домен подписки (Sub Domain):</label>
+									<input type="text" id="sub_domain" name="sub_domain" class="form-control" placeholder="https://sub.neo-vpn.click" value="https://sub.neo-vpn.click" required />
+								</div>
+								<div class="col-4">
+									<label for="sub_path">Путь (Sub Path):</label>
+									<input type="text" id="sub_path" name="sub_path" class="form-control" placeholder="/sub/" value="/sub/" required />
+								</div>
 							</div>
+							<small class="text-secondary d-block mt-1 mb-2">Формирование ссылки: <code>{sub_domain}/{sub_path}/{client_sub_id}</code></small>
 							<div class="mt-3 mb-2">
 								<a class="text-decoration-none text-secondary small" data-bs-toggle="collapse" href="#addHostSshSection" role="button" aria-expanded="false" aria-controls="addHostSshSection">
 									<i class="fas fa-terminal me-1"></i>Настройки SSH для сервера (опционально) ▾
@@ -202,11 +208,23 @@
 						<button type="button" class="btn btn-outline-secondary btn-sm pill d-none" data-action="cancel">Отмена</button>
 					</div>
 				</form>
-				<form action="{{ url_for('update_host_subscription_route') }}" method="post" class="form-inline" style="margin: 8px 0;">
+				<form action="{{ url_for('update_host_subscription_route') }}" method="post" style="margin: 10px 0;">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
 					<input type="hidden" name="host_name" value="{{ host.host_name }}" />
-					<input class="form-control pill" type="text" name="host_subscription_url" placeholder="Ссылка подписки для этого хоста" value="{{ host.subscription_url or '' }}" />
-					<button type="submit" class="btn btn-outline-secondary btn-sm pill" style="margin-left:6px;">Сохранить ссылку</button>
+					<div class="row g-2 align-items-end">
+						<div class="col-12 col-md-6">
+							<label class="form-label small mb-1" for="sub_domain_{{ loop.index }}">Домен подписки (Sub Domain):</label>
+							<input id="sub_domain_{{ loop.index }}" class="form-control pill" type="text" name="sub_domain" placeholder="https://sub.neo-vpn.click" value="{{ host.sub_domain or 'https://sub.neo-vpn.click' }}" required />
+						</div>
+						<div class="col-8 col-md-4">
+							<label class="form-label small mb-1" for="sub_path_{{ loop.index }}">Путь (Sub Path):</label>
+							<input id="sub_path_{{ loop.index }}" class="form-control pill" type="text" name="sub_path" placeholder="/sub/" value="{{ host.sub_path or '/sub/' }}" required />
+						</div>
+						<div class="col-4 col-md-2">
+							<button type="submit" class="btn btn-outline-secondary btn-sm pill w-100">Сохранить</button>
+						</div>
+					</div>
+					<small class="text-secondary d-block mt-1">Клиентская ссылка: <code>{{ (host.sub_domain or 'https://sub.neo-vpn.click').rstrip('/') }}/{{ (host.sub_path or '/sub/').strip('/') }}/{client_sub_id}</code></small>
 				</form>
                 <!-- SSH настройки для speedtest на удалённом хосте -->
                 <div class="card glass" style="margin: 8px 0;">
@@ -740,6 +758,77 @@
               </button>
             </div>
             {# === / ВСТАВКА КОНЧИЛАСЬ === #}
+
+            <h3 class="h4 mt-4">Настройка Aaio (Фиат без юрлица: Карты UAH/RUB/KZT, СБП)</h3>
+            <div class="mb-3">
+              <input type="hidden" name="aaio_enabled" value="false" />
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="aaio_enabled" name="aaio_enabled" value="true" {% if settings.aaio_enabled == 'true' %}checked{% endif %}>
+                <label class="form-check-label" for="aaio_enabled">Включить оплату через Aaio</label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="aaio_merchant_id">Aaio Merchant ID</label>
+              <input class="form-control" type="text" id="aaio_merchant_id" name="aaio_merchant_id" value="{{ settings.aaio_merchant_id or '' }}" placeholder="UUID мерчанта из личного кабинета" />
+            </div>
+            <div class="mb-3 password-wrapper">
+              <label class="form-label" for="aaio_secret_1">Aaio Secret 1 (Создание счетов)</label>
+              <div class="d-flex gap-2">
+                <input class="form-control" type="password" id="aaio_secret_1" name="aaio_secret_1" value="{{ settings.aaio_secret_1 or '' }}" />
+                <button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+              </div>
+            </div>
+            <div class="mb-3 password-wrapper">
+              <label class="form-label" for="aaio_secret_2">Aaio Secret 2 (Валидация вебхуков)</label>
+              <div class="d-flex gap-2">
+                <input class="form-control" type="password" id="aaio_secret_2" name="aaio_secret_2" value="{{ settings.aaio_secret_2 or '' }}" />
+                <button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+              </div>
+            </div>
+            <div class="mb-3 password-wrapper">
+              <label class="form-label" for="aaio_api_key">Aaio API Key (Опционально)</label>
+              <div class="d-flex gap-2">
+                <input class="form-control" type="password" id="aaio_api_key" name="aaio_api_key" value="{{ settings.aaio_api_key or '' }}" />
+                <button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+              </div>
+            </div>
+            <div class="form-text text-secondary mb-3">Вебхук URL для указания в настройках магазина Aaio: <code>https://auth.neo-vpn.click:8443/webhook/aaio</code></div>
+
+            <h3 class="h4 mt-4">Настройка Cryptomus (Мультивалютная крипта 8 активов + P2P)</h3>
+            <div class="mb-3">
+              <input type="hidden" name="cryptomus_enabled" value="false" />
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="cryptomus_enabled" name="cryptomus_enabled" value="true" {% if settings.cryptomus_enabled == 'true' %}checked{% endif %}>
+                <label class="form-check-label" for="cryptomus_enabled">Включить оплату через Cryptomus</label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="cryptomus_merchant_id">Cryptomus Merchant UUID</label>
+              <input class="form-control" type="text" id="cryptomus_merchant_id" name="cryptomus_merchant_id" value="{{ settings.cryptomus_merchant_id or '' }}" placeholder="UUID магазина из личного кабинета" />
+            </div>
+            <div class="mb-3 password-wrapper">
+              <label class="form-label" for="cryptomus_api_key">Cryptomus Payment API Key</label>
+              <div class="d-flex gap-2">
+                <input class="form-control" type="password" id="cryptomus_api_key" name="cryptomus_api_key" value="{{ settings.cryptomus_api_key or '' }}" />
+                <button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+              </div>
+            </div>
+            <div class="form-text text-secondary mb-3">Вебхук URL для указания в кабинете Cryptomus: <code>https://auth.neo-vpn.click:8443/webhook/cryptomus</code>. Поддерживаются: USDT, USDC, BTC, ETH, XRP, XMR, LTC, TON.</div>
+
+            <h3 class="h4 mt-4">Валютное ядро (База USD + 24h Кэш)</h3>
+            <div class="mb-3">
+              <label class="form-label" for="base_currency">Базовая системная валюта</label>
+              <input class="form-control" type="text" id="base_currency" name="base_currency" value="{{ settings.base_currency or 'USD' }}" readonly />
+              <div class="form-text text-secondary">Все расчёты тарифов, реферальных балансов и стоимости хранятся в базовой валюте USD ($).</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="stars_rate_usd">Стоимость 1 Telegram Star в USD ($)</label>
+              <div class="input-group">
+                <input class="form-control" type="number" step="0.001" min="0.001" id="stars_rate_usd" name="stars_rate_usd" value="{{ settings.stars_rate_usd or '0.02' }}" />
+                <span class="input-group-text">$</span>
+              </div>
+              <div class="form-text text-secondary">Стандартная оценка: 1 XTR = $0.02 USD (50 звёзд = $1.00 USD).</div>
+            </div>
 
 					</div> <!-- /card-body -->
 				</div>   <!-- /card -->

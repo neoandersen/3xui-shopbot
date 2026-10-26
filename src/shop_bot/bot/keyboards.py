@@ -620,11 +620,14 @@ def create_host_selection_keyboard(hosts: list, action: str) -> InlineKeyboardMa
     builder.adjust(1)
     return builder.as_markup()
 
-def create_plans_keyboard(plans: list[dict], action: str, host_name: str, key_id: int = 0) -> InlineKeyboardMarkup:
+def create_plans_keyboard(plans: list[dict], action: str, host_name: str, key_id: int = 0, currency: str = "USD") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    from shop_bot.services import currency_service
     for plan in plans:
         callback_data = f"buy_{host_name}_{plan['plan_id']}_{action}_{key_id}"
-        builder.button(text=f"{plan['plan_name']} - {plan['price']:.0f} RUB", callback_data=callback_data)
+        price_usd = float(plan['price'])
+        price_formatted = currency_service.format_price(price_usd, currency)
+        builder.button(text=f"{plan['plan_name']} - {price_formatted}", callback_data=callback_data)
     back_callback = "manage_keys" if action == "extend" else "buy_new_key"
     builder.button(text=(get_setting("btn_back") or "⬅️ Назад"), callback_data=back_callback)
     builder.adjust(1) 
@@ -645,8 +648,10 @@ def create_payment_method_keyboard(
     main_balance: float | None = None,
     price: float | None = None,
     has_promo_applied: bool | None = None,
+    currency: str = "USD"
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    from shop_bot.services import currency_service
 
     # Промокод: ввести/убрать
     if has_promo_applied:
@@ -659,12 +664,17 @@ def create_payment_method_keyboard(
         label = get_setting("btn_pay_with_balance") or "💼 Оплатить с баланса"
         if main_balance is not None:
             try:
-                label += f" ({main_balance:.0f} RUB)"
+                bal_str = currency_service.format_price(main_balance, currency)
+                label += f" ({bal_str})"
             except Exception:
                 pass
         builder.button(text=label, callback_data="pay_balance")
 
     # Внешние способы оплаты
+    if payment_methods and payment_methods.get("aaio"):
+        builder.button(text="💳 Карты (UAH/RUB/KZT, World) / СБП — Aaio", callback_data="pay_aaio")
+    if payment_methods and payment_methods.get("cryptomus"):
+        builder.button(text="🌐 Мультивалютная крипта (USDT, BTC...) — Cryptomus", callback_data="pay_cryptomus")
     if payment_methods and payment_methods.get("yookassa"):
         if get_setting("sbp_enabled"):
             builder.button(text="🏦 СБП / Банковская карта", callback_data="pay_yookassa")
@@ -820,6 +830,10 @@ def create_payment_with_check_keyboard(payment_url: str, check_callback: str) ->
 def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     # Только внешние способы оплаты, без оплаты с баланса
+    if payment_methods and payment_methods.get("aaio"):
+        builder.button(text="💳 Карты (UAH/RUB/KZT, World) / СБП — Aaio", callback_data="topup_pay_aaio")
+    if payment_methods and payment_methods.get("cryptomus"):
+        builder.button(text="🌐 Мультивалютная крипта (USDT, BTC...) — Cryptomus", callback_data="topup_pay_cryptomus")
     if payment_methods and payment_methods.get("yookassa"):
         if get_setting("sbp_enabled"):
             builder.button(text="🏦 СБП / Банковская карта", callback_data="topup_pay_yookassa")
@@ -889,16 +903,26 @@ def create_back_to_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text=(get_setting("btn_back_to_menu") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     return builder.as_markup()
 
-def create_profile_keyboard() -> InlineKeyboardMarkup:
-    kb = _build_keyboard_from_db('profile_menu')
-    if kb:
-        return kb
-
+def create_profile_keyboard(preferred_currency: str = "USD") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=(get_setting("btn_top_up") or "➕ Пополнить баланс"), callback_data="top_up_start")
     builder.button(text=(get_setting("btn_referral") or "🤝 Реферальная программа"), callback_data="show_referral_program")
+
+    # Переключатели валюты: USD ($), EUR (€), UAH (₴), RUB (₽), KZT (₸)
+    currencies = [
+        ("USD", "USD ($)"),
+        ("EUR", "EUR (€)"),
+        ("UAH", "UAH (₴)"),
+        ("RUB", "RUB (₽)"),
+        ("KZT", "KZT (₸)"),
+    ]
+    curr_upper = (preferred_currency or "USD").upper().strip()
+    for code, label in currencies:
+        btn_label = f"✓ {label}" if code == curr_upper else label
+        builder.button(text=btn_label, callback_data=f"set_currency_{code}")
+
     builder.button(text=(get_setting("btn_back_to_menu") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
-    builder.adjust(1)
+    builder.adjust(1, 1, 3, 2, 1)
     return builder.as_markup()
 
 def create_welcome_keyboard(channel_url: str | None, is_subscription_forced: bool = False) -> InlineKeyboardMarkup:

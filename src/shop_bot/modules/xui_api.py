@@ -167,39 +167,44 @@ def get_connection_string(inbound: Inbound, user_uuid: str, host_url: str, remar
     return connection_string
 
 def get_subscription_link(user_uuid: str, host_url: str, host_name: str | None = None, sub_token: str | None = None) -> str:
-    """Build subscription URL with the following priority:
-    1) Host-specific subscription_url (xui_hosts.subscription_url)
-    2) Fallback: domain/host_url + default path
-    Supports optional token replacement if base contains "{token}".
+    """Build client subscription URL via normalization:
+    f"{sub_domain.rstrip('/')}/{sub_path.strip('/')}/{client_sub_id}"
+    Parameters:
+    - sub_domain (default: "https://sub.neo-vpn.click")
+    - sub_path (default: "/sub/")
     """
-    host_base = None
-    try:
-        if host_name:
+    client_sub_id = (sub_token or user_uuid or "").strip()
+    sub_domain = None
+    sub_path = None
+
+    if host_name:
+        try:
             host = get_host(host_name)
             if host:
-                host_base = (host.get("subscription_url") or "").strip()
-    except Exception:
-        host_base = None
+                sub_domain = (host.get("sub_domain") or "").strip()
+                sub_path = (host.get("sub_path") or "").strip()
+                # Backwards compatibility with legacy subscription_url
+                if not sub_domain and host.get("subscription_url"):
+                    legacy_url = host.get("subscription_url").strip().replace("{token}", "").rstrip('/')
+                    parsed = urlparse(legacy_url)
+                    if parsed.scheme and parsed.netloc:
+                        sub_domain = f"{parsed.scheme}://{parsed.netloc}"
+                        sub_path = parsed.path or "/sub/"
+                    else:
+                        sub_domain = legacy_url
+        except Exception:
+            pass
 
-    base = (host_base or "").strip()
+    if not sub_domain:
+        sub_domain = "https://sub.neo-vpn.click"
+    if not sub_path:
+        sub_path = "/sub/"
 
-    if sub_token:
-        if base:
-            return base.replace("{token}", sub_token) if "{token}" in base else f"{base.rstrip('/')}/{sub_token}"
-        domain = (get_setting("domain") or "").strip()
-        parsed = urlparse(host_url)
-        hostname = domain if domain else (parsed.hostname or "")
-        scheme = parsed.scheme if parsed.scheme in ("http", "https") else "https"
-        return f"{scheme}://{hostname}/sub/{sub_token}"
-
-    if base:
-        return base
-
-    domain = (get_setting("domain") or "").strip()
-    parsed = urlparse(host_url)
-    hostname = domain if domain else (parsed.hostname or "")
-    scheme = parsed.scheme if parsed.scheme in ("http", "https") else "https"
-    return f"{scheme}://{hostname}/sub/{user_uuid}?format=v2ray"
+    norm_domain = sub_domain.rstrip('/')
+    norm_path = sub_path.strip('/')
+    if norm_path:
+        return f"{norm_domain}/{norm_path}/{client_sub_id}"
+    return f"{norm_domain}/{client_sub_id}"
 
 def update_or_create_client_on_panel(api: Api, inbound_id: int, email: str, days_to_add: int | None = None, target_expiry_ms: int | None = None) -> tuple[str | None, int | None, str | None]:
     try:

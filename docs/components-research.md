@@ -259,3 +259,47 @@
     3. Клиенту возвращаются актуальные метрики аудита безопасности.
   - Вне Docker (или на хосте): скрипт `server_security_harden.sh` запускается напрямую через `subprocess` (с дев-эмуляцией для Windows).
   - В скрипте `src/scripts/server_security_harden.sh` добавлен автоматический сброс файла триггера при запуске (`rm -f "${TRIGGER_FILE}"`).
+
+## 11. Релиз NeoVPN ShopBot v1.3.0: Мультивалютное ядро, платёжные шлюзы и нормализация подписок
+
+### 11.1. Разделение конфигурации URL подписки (`sub_domain` и `sub_path`)
+- **Проблема**: В ранних версиях ссылка подписки хранилась в виде единой строки `subscription_url` с неявным или жестко закодированным плейсхолдером `{token}`, что приводило к ошибкам генерации при смене домена или порта, а также не соответствовало структуре параметров 3X-UI.
+- **Реализация**:
+  1. В таблицу `xui_hosts` добавлены столбцы `sub_domain TEXT DEFAULT 'https://sub.neo-vpn.click'` и `sub_path TEXT DEFAULT '/sub/'`.
+  2. Нормализация клиентской ссылки подписки в `src/shop_bot/modules/xui_api.py` (`get_subscription_link`):
+     ```python
+     norm_domain = (sub_domain or "https://sub.neo-vpn.click").rstrip('/')
+     norm_path = (sub_path or "/sub/").strip('/')
+     if norm_path:
+         return f"{norm_domain}/{norm_path}/{client_sub_id}"
+     return f"{norm_domain}/{client_sub_id}"
+     ```
+     Полностью исключен хардкод `{token}` в строке шаблона. Для легаси записей выполняется автоматический парсинг домена и пути через `urllib.parse.urlparse`.
+  3. В веб-интерфейсе `settings.html`:
+     - В блоке «Добавить новый хост» разделены поля ввода `sub_domain` и `sub_path`.
+     - В карточке каждого существующего хоста единый инпут заменен на адаптивную сетку полей с кнопкой сохранения и динамическим превью формата клиентской ссылки.
+  4. Nginx-конфигурация `deploy/nginx/sub.neo-vpn.click.conf`:
+     - Принимает запросы по HTTPS 443 на субдомен `sub.neo-vpn.click`.
+     - Проксирует путь `/sub/` на локальный порт `127.0.0.1:2096/sub/`, скрывая порт 2096 от сканеров и блокировок провайдеров.
+
+### 11.2. Мультивалютное ядро и котировочный сервис (`currency_service.py`)
+- **Базовая валюта**: Доллар США (`USD`, `$`). Все тарифы, балансы и реферальные начисления рассчитываются в USD.
+- **Пользовательская валюта**: В таблицу `users` добавлен столбец `preferred_currency VARCHAR(5) DEFAULT 'USD'`.
+- **Строгий кэш 24 часа**: В таблице `exchange_rates (currency_pair PK, rate, updated_at, expires_at)` TTL равен строго 86400 сек (`expires_at = updated_at + 86400`). Запросы к внешним API (open.er-api.com и CoinGecko) выполняются только по истечении срока действия кэша.
+- **Снепшот курсов**: Поле `transactions.exchange_rate` фиксирует курс на момент создания инвойса.
+- **Интерфейс Telegram**: В профиле пользователя размещены инлайн-кнопки переключения валют (USD, EUR, UAH, RUB, KZT) с динамической отметкой `✓` и автоматическим пересчетом баланса и статистики.
+
+### 11.3. Платёжные шлюзы без комиссии для самозанятых / ИП (0% Aaio и Cryptomus)
+- **Aaio (`src/shop_bot/modules/aaio_payment.py`)**:
+  - Карточный эквайринг и СБП (UAH, RUB, KZT, Международные карты).
+  - Формирование ссылки оплаты через `https://aaio.so/merchant/get_pay_url` с подписью SHA-256 (Secret 1).
+  - Вебхук `POST /webhook/aaio` с проверкой подписи SHA-256 (Secret 2) и идемпотентной активацией подписки через `find_and_complete_pending_transaction`.
+- **Cryptomus (`src/shop_bot/modules/cryptomus_payment.py`)**:
+  - Топ-8 криптовалют: USDT, USDC, BTC, ETH, XRP, XMR, LTC, TON.
+  - Инвойсирование в USD через `POST https://api.cryptomus.com/v1/payment` с заголовками `merchant` и `sign` (MD5 от Base64 JSON-тела + API-ключ).
+  - Вебхук `POST /webhook/cryptomus` и ручная проверка статуса через `POST /v1/payment/info`.
+
+### 11.4. Speedtest Runner и матрица портов периметра
+- В `src/shop_bot/data_manager/speedtest_runner.py` команды `speedtest --json` и `speedtest-cli --json` вынесены на первое место в списке `COMMANDS` для совместимости с версией 2.1.3 на целевых хостах.
+- Разработан отказоустойчивый парсер `_extract_json_from_text()`, устойчивый к служебным баннерам в stdout.
+- В `security.html` и `server_security_harden.sh` обновлены описания портов матричного аудита (3X-UI Core 42357, Admin Gateway 8443, Trap SSH 22, VLESS Reality 443).

@@ -35,7 +35,8 @@ def initialize_db():
                     referred_by INTEGER,
                     referral_balance REAL DEFAULT 0,
                     referral_balance_all REAL DEFAULT 0,
-                    referral_start_bonus_received BOOLEAN DEFAULT 0
+                    referral_start_bonus_received BOOLEAN DEFAULT 0,
+                    preferred_currency VARCHAR(5) DEFAULT 'USD'
                 )
             ''')
 
@@ -82,6 +83,8 @@ def initialize_db():
                     host_pass TEXT NOT NULL,
                     host_inbound_id INTEGER NOT NULL,
                     subscription_url TEXT,
+                    sub_domain TEXT DEFAULT 'https://sub.neo-vpn.click',
+                    sub_path TEXT DEFAULT '/sub/',
                     ssh_host TEXT,
                     ssh_port INTEGER,
                     ssh_user TEXT,
@@ -291,6 +294,19 @@ def initialize_db():
                 "yoomoney_client_id": None,
                 "yoomoney_client_secret": None,
                 "yoomoney_redirect_uri": None,
+                # Aaio payments (no legal entity required)
+                "aaio_enabled": "false",
+                "aaio_merchant_id": None,
+                "aaio_secret_1": None,
+                "aaio_secret_2": None,
+                "aaio_api_key": None,
+                # Cryptomus payments (multi-crypto & P2P)
+                "cryptomus_enabled": "false",
+                "cryptomus_merchant_id": None,
+                "cryptomus_api_key": None,
+                # Base currency settings
+                "base_currency": "USD",
+                "stars_rate_usd": "0.02",
             }
             run_migration()
             for key, value in default_settings.items():
@@ -363,9 +379,56 @@ def initialize_db():
                 if 'last_start_at' not in user_cols:
                     cursor.execute("ALTER TABLE users ADD COLUMN last_start_at TIMESTAMP")
                     logging.info("Добавлена колонка last_start_at в таблицу users")
+                if 'preferred_currency' not in user_cols:
+                    cursor.execute("ALTER TABLE users ADD COLUMN preferred_currency VARCHAR(5) DEFAULT 'USD'")
+                    logging.info("Добавлена колонка preferred_currency в таблицу users")
                 conn.commit()
             except Exception as e:
                 logging.warning(f"Ошибка при миграции схемы таблицы users: {e}")
+
+            # v1.3.0: Создание таблицы котировок exchange_rates
+            try:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS exchange_rates (
+                        currency_pair VARCHAR(16) PRIMARY KEY,
+                        rate REAL NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        expires_at INTEGER NOT NULL
+                    )
+                ''')
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"Ошибка создания exchange_rates: {e}")
+
+            # v1.3.0: Миграция полей transactions (exchange_rate, amount_usd, provider, provider_payment_id)
+            try:
+                cursor.execute("PRAGMA table_info(transactions)")
+                tx_cols = {row[1] for row in cursor.fetchall()}
+                if 'exchange_rate' not in tx_cols:
+                    cursor.execute("ALTER TABLE transactions ADD COLUMN exchange_rate REAL")
+                if 'amount_usd' not in tx_cols:
+                    cursor.execute("ALTER TABLE transactions ADD COLUMN amount_usd REAL")
+                if 'provider' not in tx_cols:
+                    cursor.execute("ALTER TABLE transactions ADD COLUMN provider TEXT")
+                if 'provider_payment_id' not in tx_cols:
+                    cursor.execute("ALTER TABLE transactions ADD COLUMN provider_payment_id TEXT")
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"Ошибка при миграции transactions: {e}")
+
+            # v1.3.0: Миграция полей host_speedtests (download_speed, upload_speed, ping)
+            try:
+                cursor.execute("PRAGMA table_info(host_speedtests)")
+                st_cols = {row[1] for row in cursor.fetchall()}
+                if 'download_speed' not in st_cols:
+                    cursor.execute("ALTER TABLE host_speedtests ADD COLUMN download_speed REAL")
+                if 'upload_speed' not in st_cols:
+                    cursor.execute("ALTER TABLE host_speedtests ADD COLUMN upload_speed REAL")
+                if 'ping' not in st_cols:
+                    cursor.execute("ALTER TABLE host_speedtests ADD COLUMN ping REAL")
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"Ошибка при миграции host_speedtests: {e}")
             
             logging.info("База данных успешно инициализирована.")
     except sqlite3.Error as e:
@@ -784,6 +847,12 @@ def run_migration():
                 logging.info(" -> Столбец 'subscription_url' успешно добавлен в 'xui_hosts'.")
             else:
                 logging.info(" -> Столбец 'subscription_url' уже существует в 'xui_hosts'.")
+            if 'sub_domain' not in xh_columns:
+                cursor.execute("ALTER TABLE xui_hosts ADD COLUMN sub_domain TEXT DEFAULT 'https://sub.neo-vpn.click'")
+                logging.info(" -> Столбец 'sub_domain' успешно добавлен в 'xui_hosts'.")
+            if 'sub_path' not in xh_columns:
+                cursor.execute("ALTER TABLE xui_hosts ADD COLUMN sub_path TEXT DEFAULT '/sub/'")
+                logging.info(" -> Столбец 'sub_path' успешно добавлен в 'xui_hosts'.")
             # SSH settings for speedtests (optional)
             if 'ssh_host' not in xh_columns:
                 cursor.execute("ALTER TABLE xui_hosts ADD COLUMN ssh_host TEXT")
@@ -987,7 +1056,16 @@ def create_new_transactions_table(cursor: sqlite3.Cursor):
         )
     ''')
 
-def create_host(name: str, url: str, user: str, passwd: str, inbound: int, subscription_url: str | None = None):
+def create_host(
+    name: str,
+    url: str,
+    user: str,
+    passwd: str,
+    inbound: int,
+    subscription_url: str | None = None,
+    sub_domain: str | None = None,
+    sub_path: str | None = None,
+):
     try:
         name = normalize_host_name(name)
         url = (url or "").strip()
@@ -997,28 +1075,49 @@ def create_host(name: str, url: str, user: str, passwd: str, inbound: int, subsc
             inbound = int(inbound)
         except Exception:
             pass
-        subscription_url = (subscription_url or None)
+
+        sub_domain = (sub_domain or "").strip() or "https://sub.neo-vpn.click"
+        sub_path = (sub_path or "").strip() or "/sub/"
+        assembled_url = (subscription_url or f"{sub_domain.rstrip('/')}/{sub_path.strip('/')}/").strip()
 
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             try:
                 cursor.execute(
-                    "INSERT INTO xui_hosts (host_name, host_url, host_username, host_pass, host_inbound_id, subscription_url) VALUES (?, ?, ?, ?, ?, ?)",
-                    (name, url, user, passwd, inbound, subscription_url)
+                    """INSERT INTO xui_hosts 
+                       (host_name, host_url, host_username, host_pass, host_inbound_id, subscription_url, sub_domain, sub_path)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (name, url, user, passwd, inbound, assembled_url, sub_domain, sub_path)
                 )
-            except sqlite3.OperationalОшибка:
-                cursor.execute(
-                    "INSERT INTO xui_hosts (host_name, host_url, host_username, host_pass, host_inbound_id) VALUES (?, ?, ?, ?, ?)",
-                    (name, url, user, passwd, inbound)
-                )
+            except sqlite3.OperationalError:
+                try:
+                    cursor.execute(
+                        "INSERT INTO xui_hosts (host_name, host_url, host_username, host_pass, host_inbound_id, subscription_url) VALUES (?, ?, ?, ?, ?, ?)",
+                        (name, url, user, passwd, inbound, assembled_url)
+                    )
+                except sqlite3.OperationalError:
+                    cursor.execute(
+                        "INSERT INTO xui_hosts (host_name, host_url, host_username, host_pass, host_inbound_id) VALUES (?, ?, ?, ?, ?)",
+                        (name, url, user, passwd, inbound)
+                    )
             conn.commit()
             logging.info(f"Успешно создан новый хост: {name}")
     except sqlite3.Error as e:
         logging.error(f"Ошибка при создании хоста '{name}': {e}")
 
-def update_host_subscription_url(host_name: str, subscription_url: str | None) -> bool:
+def update_host_subscription_url(
+    host_name: str,
+    subscription_url: str | None = None,
+    sub_domain: str | None = None,
+    sub_path: str | None = None
+) -> bool:
+    """Обновить параметры подписки (sub_domain, sub_path, subscription_url)."""
     try:
         host_name = normalize_host_name(host_name)
+        sub_domain = (sub_domain or "").strip() or "https://sub.neo-vpn.click"
+        sub_path = (sub_path or "").strip() or "/sub/"
+        assembled_url = (subscription_url or f"{sub_domain.rstrip('/')}/{sub_path.strip('/')}/").strip()
+
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT 1 FROM xui_hosts WHERE TRIM(host_name) = TRIM(?)", (host_name,))
@@ -1027,15 +1126,25 @@ def update_host_subscription_url(host_name: str, subscription_url: str | None) -
                 logging.warning(f"update_host_subscription_url: хост с именем '{host_name}' не найден (после TRIM)")
                 return False
 
-            cursor.execute(
-                "UPDATE xui_hosts SET subscription_url = ? WHERE TRIM(host_name) = TRIM(?)",
-                (subscription_url, host_name)
-            )
+            try:
+                cursor.execute(
+                    "UPDATE xui_hosts SET subscription_url = ?, sub_domain = ?, sub_path = ? WHERE TRIM(host_name) = TRIM(?)",
+                    (assembled_url, sub_domain, sub_path, host_name)
+                )
+            except sqlite3.OperationalError:
+                cursor.execute(
+                    "UPDATE xui_hosts SET subscription_url = ? WHERE TRIM(host_name) = TRIM(?)",
+                    (assembled_url, host_name)
+                )
             conn.commit()
             return True
     except sqlite3.Error as e:
         logging.error(f"Не удалось обновить subscription_url для хоста '{host_name}': {e}")
         return False
+
+def update_host_sub_params(host_name: str, sub_domain: str | None, sub_path: str | None) -> bool:
+    """Обновить sub_domain и sub_path для хоста."""
+    return update_host_subscription_url(host_name, None, sub_domain=sub_domain, sub_path=sub_path)
 
 def set_referral_start_bonus_received(user_id: int) -> bool:
     """Пометить, что пользователь получил стартовый бонус за реферальную регистрацию."""
@@ -1283,24 +1392,39 @@ def find_and_complete_pending_transaction(
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            cursor.execute("SELECT * FROM transactions WHERE payment_id = ? AND status = 'pending'", (payment_id,))
+            cursor.execute("SELECT * FROM transactions WHERE (payment_id = ? OR provider_payment_id = ?) AND status = 'pending'", (payment_id, payment_id))
             transaction = cursor.fetchone()
             if not transaction:
                 logger.warning(f"Ожидающая транзакция не найдена для payment_id={payment_id}")
                 return None
 
-            cursor.execute(
-                """
-                UPDATE transactions
-                SET status = 'paid',
-                    amount_rub = COALESCE(?, amount_rub),
-                    amount_currency = COALESCE(?, amount_currency),
-                    currency_name = COALESCE(?, currency_name),
-                    payment_method = COALESCE(?, payment_method)
-                WHERE payment_id = ?
-                """,
-                (amount_rub, amount_currency, currency_name, payment_method, payment_id)
-            )
+            tx_id = transaction['id'] if 'id' in transaction.keys() else None
+            if tx_id:
+                cursor.execute(
+                    """
+                    UPDATE transactions
+                    SET status = 'paid',
+                        amount_rub = COALESCE(?, amount_rub),
+                        amount_currency = COALESCE(?, amount_currency),
+                        currency_name = COALESCE(?, currency_name),
+                        payment_method = COALESCE(?, payment_method)
+                    WHERE id = ?
+                    """,
+                    (amount_rub, amount_currency, currency_name, payment_method, tx_id)
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE transactions
+                    SET status = 'paid',
+                        amount_rub = COALESCE(?, amount_rub),
+                        amount_currency = COALESCE(?, amount_currency),
+                        currency_name = COALESCE(?, currency_name),
+                        payment_method = COALESCE(?, payment_method)
+                    WHERE payment_id = ? OR provider_payment_id = ?
+                    """,
+                    (amount_rub, amount_currency, currency_name, payment_method, payment_id, payment_id)
+                )
             conn.commit()
 
             try:
@@ -1337,25 +1461,21 @@ def insert_host_speedtest(
             method_s = 'ssh'
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                '''
-                INSERT INTO host_speedtests
-                (host_name, method, ping_ms, jitter_ms, download_mbps, upload_mbps, server_name, server_id, ok, error)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                '''
-                , (
-                    host_name_n,
-                    method_s,
-                    ping_ms,
-                    jitter_ms,
-                    download_mbps,
-                    upload_mbps,
-                    server_name,
-                    server_id,
-                    1 if ok else 0,
-                    (error or None)
-                )
-            )
+            cols = {row[1] for row in cursor.execute("PRAGMA table_info(host_speedtests)").fetchall()}
+            fields = ["host_name", "method", "ping_ms", "jitter_ms", "download_mbps", "upload_mbps", "server_name", "server_id", "ok", "error"]
+            vals = [host_name_n, method_s, ping_ms, jitter_ms, download_mbps, upload_mbps, server_name, server_id, 1 if ok else 0, (error or None)]
+            if "download_speed" in cols:
+                fields.append("download_speed")
+                vals.append(download_mbps)
+            if "upload_speed" in cols:
+                fields.append("upload_speed")
+                vals.append(upload_mbps)
+            if "ping" in cols:
+                fields.append("ping")
+                vals.append(ping_ms)
+            placeholders = ", ".join(["?"] * len(fields))
+            col_names = ", ".join(fields)
+            cursor.execute(f"INSERT INTO host_speedtests ({col_names}) VALUES ({placeholders})", vals)
             conn.commit()
             return True
     except sqlite3.Error as e:
@@ -2070,13 +2190,38 @@ def get_total_spent_sum() -> float:
         logging.error(f"Не удалось get total spent sum: {e}")
         return 0.0
 
-def create_pending_transaction(payment_id: str, user_id: int, amount_rub: float, metadata: dict) -> int:
+def create_pending_transaction(
+    payment_id: str,
+    user_id: int,
+    amount_rub: float,
+    metadata: dict,
+    provider: str | None = None,
+    provider_payment_id: str | None = None,
+    amount_usd: float | None = None,
+    exchange_rate: float | None = None,
+    currency_name: str | None = None,
+    amount_currency: float | None = None,
+) -> int:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO transactions (payment_id, user_id, status, amount_rub, metadata) VALUES (?, ?, ?, ?, ?)",
-                (payment_id, user_id, 'pending', amount_rub, json.dumps(metadata))
+                """INSERT INTO transactions
+                   (payment_id, user_id, status, amount_rub, metadata, provider, provider_payment_id, amount_usd, exchange_rate, currency_name, amount_currency)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    payment_id,
+                    user_id,
+                    'pending',
+                    amount_rub,
+                    json.dumps(metadata),
+                    provider,
+                    provider_payment_id or payment_id,
+                    amount_usd if amount_usd is not None else amount_rub,
+                    exchange_rate,
+                    currency_name,
+                    amount_currency
+                )
             )
             conn.commit()
             return cursor.lastrowid
@@ -2108,19 +2253,139 @@ def find_and_complete_ton_transaction(payment_id: str, amount_ton: float) -> dic
         logging.error(f"Не удалось complete TON transaction {payment_id}: {e}")
         return None
 
-def log_transaction(username: str, transaction_id: str | None, payment_id: str | None, user_id: int, status: str, amount_rub: float, amount_currency: float | None, currency_name: str | None, payment_method: str, metadata: str):
+def log_transaction(
+    username: str,
+    transaction_id: str | None,
+    payment_id: str | None,
+    user_id: int,
+    status: str,
+    amount_rub: float,
+    amount_currency: float | None,
+    currency_name: str | None,
+    payment_method: str,
+    metadata: str,
+    exchange_rate: float | None = None,
+    amount_usd: float | None = None,
+    provider: str | None = None,
+    provider_payment_id: str | None = None,
+):
     try:
+        # Auto-compute amount_usd if not explicitly supplied
+        if amount_usd is None and amount_rub is not None:
+            if (currency_name or "").upper() == "USD" and amount_currency is not None:
+                amount_usd = amount_currency
+            elif exchange_rate and exchange_rate > 0 and amount_currency:
+                amount_usd = round(amount_currency / exchange_rate, 2)
+            else:
+                amount_usd = amount_rub
+
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO transactions
-                   (username, transaction_id, payment_id, user_id, status, amount_rub, amount_currency, currency_name, payment_method, metadata, created_date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (username, transaction_id, payment_id, user_id, status, amount_rub, amount_currency, currency_name, payment_method, metadata, datetime.now())
+                   (username, transaction_id, payment_id, user_id, status, amount_rub, amount_currency, currency_name, payment_method, metadata, created_date, exchange_rate, amount_usd, provider, provider_payment_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (username, transaction_id, payment_id, user_id, status, amount_rub, amount_currency, currency_name, payment_method, metadata, datetime.now(), exchange_rate, amount_usd, provider, provider_payment_id)
             )
             conn.commit()
     except sqlite3.Error as e:
         logging.error(f"Не удалось log transaction for user {user_id}: {e}")
+
+def get_transaction_by_provider_payment_id(provider: str, provider_payment_id: str) -> dict | None:
+    """Check if transaction with given provider and provider_payment_id exists (idempotency check)."""
+    if not provider_payment_id:
+        return None
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM transactions WHERE provider = ? AND provider_payment_id = ?",
+                (provider, str(provider_payment_id))
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            # Also check generic payment_id / transaction_id
+            cursor.execute(
+                "SELECT * FROM transactions WHERE payment_id = ? OR transaction_id = ?",
+                (str(provider_payment_id), str(provider_payment_id))
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+    except sqlite3.Error as e:
+        logging.error(f"Error checking transaction for provider {provider} id {provider_payment_id}: {e}")
+        return None
+
+def get_exchange_rate_from_db(currency_pair: str) -> dict | None:
+    """Retrieve cached exchange rate from exchange_rates table."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT currency_pair, rate, updated_at, expires_at FROM exchange_rates WHERE currency_pair = ?",
+                (currency_pair.upper(),)
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+    except sqlite3.Error as e:
+        logging.error(f"Error getting exchange rate for {currency_pair}: {e}")
+        return None
+
+def save_exchange_rate_to_db(currency_pair: str, rate: float, updated_at: int, expires_at: int) -> bool:
+    """Save or update exchange rate cache in exchange_rates table."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO exchange_rates (currency_pair, rate, updated_at, expires_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(currency_pair) DO UPDATE SET
+                   rate = excluded.rate,
+                   updated_at = excluded.updated_at,
+                   expires_at = excluded.expires_at""",
+                (currency_pair.upper(), float(rate), int(updated_at), int(expires_at))
+            )
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logging.error(f"Error saving exchange rate for {currency_pair}: {e}")
+        return False
+
+def get_user_preferred_currency(telegram_id: int) -> str:
+    """Get preferred currency for user, default 'USD'."""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT preferred_currency FROM users WHERE telegram_id = ?", (telegram_id,))
+            row = cursor.fetchone()
+            if row and row[0]:
+                return str(row[0]).upper()
+            return "USD"
+    except sqlite3.Error as e:
+        logging.error(f"Error getting preferred currency for user {telegram_id}: {e}")
+        return "USD"
+
+def set_user_preferred_currency(telegram_id: int, currency: str) -> bool:
+    """Set preferred currency for user."""
+    curr = (currency or "USD").upper().strip()
+    if curr not in ("USD", "EUR", "UAH", "RUB", "KZT"):
+        curr = "USD"
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET preferred_currency = ? WHERE telegram_id = ?", (curr, telegram_id))
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logging.error(f"Error setting preferred currency for user {telegram_id}: {e}")
+        return False
+
 
 def get_paginated_transactions(page: int = 1, per_page: int = 15) -> tuple[list[dict], int]:
     offset = (page - 1) * per_page

@@ -46,7 +46,8 @@ from shop_bot.data_manager.database import (
     update_host_url, update_host_name, update_host_ssh_settings, get_latest_speedtest, get_speedtests,
     get_all_keys, get_keys_for_user, get_key_by_id, delete_key_by_id, update_key_comment, update_key_info,
     add_new_key, get_balance, adjust_user_balance, get_referrals_for_user,
-    get_user, get_key_by_email, get_host, get_traffic_sources_stats)
+    get_user, get_key_by_email, get_host, get_traffic_sources_stats,
+    find_and_complete_pending_transaction, get_transaction_by_provider_payment_id)
 
 
 _bot_controller = None
@@ -85,10 +86,16 @@ ALL_SETTINGS_KEYS = [
     "monitoring_cpu_threshold", "monitoring_mem_threshold", "monitoring_disk_threshold",
     "monitoring_alert_cooldown_sec",
     # Telegram Stars
-    "stars_enabled", "stars_per_rub", "stars_title", "stars_description",
+    "stars_enabled", "stars_per_rub", "stars_title", "stars_description", "stars_rate_usd",
     # YooMoney (separate)
     "yoomoney_enabled", "yoomoney_wallet", "yoomoney_secret", "yoomoney_api_token",
     "yoomoney_client_id", "yoomoney_client_secret", "yoomoney_redirect_uri",
+    # Aaio payments (no legal entity required)
+    "aaio_enabled", "aaio_merchant_id", "aaio_secret_1", "aaio_secret_2", "aaio_api_key",
+    # Cryptomus payments (multi-crypto & P2P)
+    "cryptomus_enabled", "cryptomus_merchant_id", "cryptomus_api_key",
+    # Currency configuration
+    "base_currency",
 ]
 
 def create_webhook_app(bot_controller_instance):
@@ -1356,8 +1363,11 @@ def create_webhook_app(bot_controller_instance):
             if 'panel_password' in request.form and request.form.get('panel_password'):
                 update_setting('panel_password', request.form.get('panel_password'))
 
-            # Обработка чекбоксов, где в форме идёт hidden=false + checkbox=true
-            checkbox_keys = ['force_subscription', 'sbp_enabled', 'trial_enabled', 'enable_referrals', 'enable_fixed_referral_bonus', 'stars_enabled', 'yoomoney_enabled', 'monitoring_enabled']
+            checkbox_keys = [
+                'force_subscription', 'sbp_enabled', 'trial_enabled', 'enable_referrals',
+                'enable_fixed_referral_bonus', 'stars_enabled', 'yoomoney_enabled', 'monitoring_enabled',
+                'aaio_enabled', 'cryptomus_enabled'
+            ]
             for checkbox_key in checkbox_keys:
                 values = request.form.getlist(checkbox_key)
                 value = values[-1] if values else 'false'
@@ -1471,15 +1481,22 @@ def create_webhook_app(bot_controller_instance):
     @login_required
     def update_host_subscription_route():
         host_name = (request.form.get('host_name') or '').strip()
+        sub_domain = (request.form.get('sub_domain') or '').strip()
+        sub_path = (request.form.get('sub_path') or '').strip()
         sub_url = (request.form.get('host_subscription_url') or '').strip()
         if not host_name:
-            flash('Не указан хост для обновления ссылки подписки.', 'danger')
+            flash('Не указан хост для обновления параметров подписки.', 'danger')
             return redirect(url_for('settings_page', tab='hosts'))
-        ok = update_host_subscription_url(host_name, sub_url or None)
+        ok = update_host_subscription_url(
+            host_name=host_name,
+            subscription_url=sub_url or None,
+            sub_domain=sub_domain or None,
+            sub_path=sub_path or None
+        )
         if ok:
-            flash('Ссылка подписки для хоста обновлена.', 'success')
+            flash('Параметры подписки (домен и путь) для хоста обновлены.', 'success')
         else:
-            flash('Не удалось обновить ссылку подписки для хоста (возможно, хост не найден).', 'danger')
+            flash('Не удалось обновить параметры подписки для хоста (возможно, хост не найден).', 'danger')
         return redirect(url_for('settings_page', tab='hosts'))
 
     @flask_app.route('/update-host-url', methods=['POST'])
@@ -1712,13 +1729,18 @@ def create_webhook_app(bot_controller_instance):
     @login_required
     def add_host_route():
         host_name = request.form['host_name']
+        sub_domain = (request.form.get('sub_domain') or '').strip() or "https://sub.neo-vpn.click"
+        sub_path = (request.form.get('sub_path') or '').strip() or "/sub/"
+        sub_url = (request.form.get('host_subscription_url') or '').strip()
         create_host(
             name=host_name,
             url=request.form['host_url'],
             user=request.form['host_username'],
             passwd=request.form['host_pass'],
             inbound=int(request.form['host_inbound_id']),
-            subscription_url=(request.form.get('host_subscription_url') or '').strip() or None
+            subscription_url=sub_url or None,
+            sub_domain=sub_domain,
+            sub_path=sub_path,
         )
         # Опциональные SSH настройки при создании хоста
         ssh_host = (request.form.get('ssh_host') or '').strip() or None
@@ -2201,6 +2223,137 @@ def create_webhook_app(bot_controller_instance):
             
         except Exception as e:
             logger.error(f"YooMoney webhook ошибка: {e}", exc_info=True)
+            return 'Error', 500
+
+    # --- Aaio Webhook ---
+    @csrf.exempt
+    @flask_app.route('/webhook/aaio', methods=['POST'])
+    @flask_app.route('/aaio-webhook', methods=['POST'])
+    def aaio_webhook_handler():
+        try:
+            logger.info("🔔 Получен webhook от Aaio")
+            data = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
+            logger.info(f"Aaio webhook payload: {data}")
+
+            merchant_id = data.get('merchant_id') or get_setting('aaio_merchant_id')
+            secret_2 = get_setting('aaio_secret_2')
+            order_id = str(data.get('order_id', '')).strip()
+            amount = data.get('amount')
+            currency = str(data.get('currency', 'RUB')).strip()
+            sign = str(data.get('sign', '')).strip()
+
+            from shop_bot.modules import aaio_payment
+            if not aaio_payment.verify_aaio_webhook_signature(
+                merchant_id=merchant_id,
+                amount=amount,
+                currency=currency,
+                secret_2=secret_2,
+                order_id=order_id,
+                received_sign=sign
+            ):
+                logger.warning(f"Aaio webhook: недействительная подпись для order_id={order_id}")
+                return 'Forbidden', 403
+
+            # Идемпотентность
+            existing_tx = get_transaction_by_provider_payment_id('aaio', order_id)
+            if existing_tx and existing_tx.get('status') in ('paid', 'completed'):
+                logger.info(f"Aaio webhook: транзакция {order_id} уже выполнена ранее (idempotent OK).")
+                return 'OK', 200
+
+            amount_val = float(amount) if amount else 0.0
+            metadata = find_and_complete_pending_transaction(
+                payment_id=order_id,
+                amount_rub=amount_val,
+                payment_method='Aaio',
+                currency_name=currency,
+                amount_currency=amount_val
+            )
+
+            if not metadata and data.get('desc'):
+                try:
+                    metadata = json.loads(data['desc'])
+                except Exception:
+                    metadata = None
+
+            if metadata:
+                metadata['payment_id'] = order_id
+                metadata['payment_method'] = metadata.get('payment_method') or 'Aaio'
+                bot = _bot_controller.get_bot_instance()
+                loop = current_app.config.get('EVENT_LOOP')
+                payment_processor = handlers.process_successful_payment
+
+                if bot and loop and loop.is_running():
+                    asyncio.run_coroutine_threadsafe(payment_processor(bot, metadata), loop)
+                    logger.info(f"Aaio webhook: платёж {order_id} успешно отправлен в обработчик.")
+                else:
+                    logger.error("Aaio webhook: бот или event loop не запущены.")
+            else:
+                logger.warning(f"Aaio webhook: транзакция {order_id} подтверждена, но метаданные заказа отсутствуют.")
+
+            return 'OK', 200
+        except Exception as e:
+            logger.error(f"Ошибка в обработчике вебхука Aaio: {e}", exc_info=True)
+            return 'Error', 500
+
+    # --- Cryptomus Webhook ---
+    @csrf.exempt
+    @flask_app.route('/webhook/cryptomus', methods=['POST'])
+    @flask_app.route('/cryptomus-webhook', methods=['POST'])
+    def cryptomus_webhook_handler():
+        try:
+            logger.info("🔔 Получен webhook от Cryptomus")
+            raw_data = request.get_data(as_text=True)
+            api_key = get_setting('cryptomus_api_key')
+
+            from shop_bot.modules import cryptomus_payment
+            is_valid, data = cryptomus_payment.verify_cryptomus_webhook(raw_data, api_key)
+            if not is_valid or not data:
+                logger.warning("Cryptomus webhook: недействительная подпись!")
+                return 'Forbidden', 403
+
+            status = str(data.get('status', '')).lower()
+            order_id = str(data.get('order_id', '')).strip()
+            uuid_val = str(data.get('uuid', '')).strip()
+            payment_id = order_id or uuid_val
+            logger.info(f"Cryptomus webhook: status={status}, order_id={order_id}, uuid={uuid_val}")
+
+            # Идемпотентность
+            existing_tx = get_transaction_by_provider_payment_id('cryptomus', payment_id)
+            if existing_tx and existing_tx.get('status') in ('paid', 'completed'):
+                logger.info(f"Cryptomus webhook: платёж {payment_id} уже был обработан (idempotent OK).")
+                return 'OK', 200
+
+            if status in ('paid', 'paid_over'):
+                amount_usd = float(data.get('amount') or 0.0)
+                amount_crypto = float(data.get('payment_amount') or 0.0)
+                crypto_currency = str(data.get('currency') or 'USDT')
+
+                metadata = find_and_complete_pending_transaction(
+                    payment_id=payment_id,
+                    amount_rub=amount_usd,
+                    payment_method=f'Cryptomus ({crypto_currency})',
+                    currency_name=crypto_currency,
+                    amount_currency=amount_crypto
+                )
+
+                if metadata:
+                    metadata['payment_id'] = payment_id
+                    metadata['payment_method'] = metadata.get('payment_method') or f'Cryptomus ({crypto_currency})'
+                    bot = _bot_controller.get_bot_instance()
+                    loop = current_app.config.get('EVENT_LOOP')
+                    payment_processor = handlers.process_successful_payment
+
+                    if bot and loop and loop.is_running():
+                        asyncio.run_coroutine_threadsafe(payment_processor(bot, metadata), loop)
+                        logger.info(f"Cryptomus webhook: платёж {payment_id} успешно отправлен в обработчик.")
+                    else:
+                        logger.error("Cryptomus webhook: бот или event loop не запущены.")
+                else:
+                    logger.warning(f"Cryptomus webhook: транзакция {payment_id} подтверждена, но метаданные отсутствуют.")
+
+            return 'OK', 200
+        except Exception as e:
+            logger.error(f"Ошибка в обработчике вебхука Cryptomus: {e}", exc_info=True)
             return 'Error', 500
 
     return flask_app
