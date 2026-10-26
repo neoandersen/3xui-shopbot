@@ -3,6 +3,7 @@ import json
 import logging
 import shutil
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = database.PROJECT_ROOT
 DATA_DIR = PROJECT_ROOT / "data"
 AUDIT_JSON_PATH = DATA_DIR / "security_audit.json"
+TRIGGER_FILE_PATH = DATA_DIR / "run_harden.trigger"
 HARDEN_SCRIPT_PATH = PROJECT_ROOT / "src" / "scripts" / "server_security_harden.sh"
 
 
@@ -74,10 +76,76 @@ def load_security_audit_data() -> Dict[str, Any]:
 
 
 def execute_security_hardening() -> Tuple[bool, str, Dict[str, Any]]:
-    """Execute src/scripts/server_security_harden.sh via subprocess with 120s timeout.
-    Returns (success, output_log, audit_data).
+    """Execute security hardening.
+    If running inside Docker (/.dockerenv exists):
+      1. Create trigger file: data/run_harden.trigger
+      2. Poll for updated data/security_audit.json (up to 15s)
+      3. Return fresh audit data to client.
+    If outside Docker:
+      Execute src/scripts/server_security_harden.sh directly via subprocess.
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    # --------------------------------------------------------------------------
+    # 1. DOCKER ENVIRONMENT HANDLER
+    # --------------------------------------------------------------------------
+    if os.path.exists("/.dockerenv"):
+        logger.info("Docker environment detected (/.dockerenv). Creating host trigger file...")
+        prev_mtime = AUDIT_JSON_PATH.stat().st_mtime if AUDIT_JSON_PATH.exists() else 0.0
+
+        try:
+            with open(TRIGGER_FILE_PATH, "w", encoding="utf-8") as tf:
+                json.dump(
+                    {
+                        "action": "run_security_hardening",
+                        "requested_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "initiator": "admin_panel",
+                    },
+                    tf,
+                    indent=2,
+                )
+            logger.info(f"Trigger file written to {TRIGGER_FILE_PATH}")
+        except Exception as e:
+            err_msg = f"Ошибка создания файла триггера {TRIGGER_FILE_PATH}: {e}"
+            logger.error(err_msg)
+            return False, err_msg, load_security_audit_data()
+
+        # Poll for updated security_audit.json (up to 15 seconds)
+        start_time = time.time()
+        updated = False
+        while time.time() - start_time < 15.0:
+            time.sleep(0.5)
+            if AUDIT_JSON_PATH.exists():
+                curr_mtime = AUDIT_JSON_PATH.stat().st_mtime
+                if curr_mtime > prev_mtime:
+                    updated = True
+                    break
+            # Also consider completed if trigger file was removed by host daemon and audit exists
+            if not TRIGGER_FILE_PATH.exists() and AUDIT_JSON_PATH.exists():
+                updated = True
+                break
+
+        audit_data = load_security_audit_data()
+        if updated:
+            success_msg = (
+                "[Docker Host] Скрипт харденинга успешно запущен хост-сервером через триггер. "
+                f"Отчёт аудита обновлен: статус {audit_data.get('status', 'SECURE')} "
+                f"(Оценка: {audit_data.get('score', 100)}/100)."
+            )
+            logger.info(success_msg)
+            return True, success_msg, audit_data
+        else:
+            timeout_msg = (
+                "[Docker Notice] Файл триггера data/run_harden.trigger создан, "
+                "но обновление data/security_audit.json превысило таймаут ожидания (15 секунд). "
+                "Убедитесь, что host-демон или cron на хост-сервере активен."
+            )
+            logger.warning(timeout_msg)
+            return False, timeout_msg, audit_data
+
+    # --------------------------------------------------------------------------
+    # 2. HOST / NON-DOCKER ENVIRONMENT HANDLER
+    # --------------------------------------------------------------------------
     script_path = HARDEN_SCRIPT_PATH
     if not script_path.exists():
         msg = f"Ошибка: Скрипт харденинга не найден по пути {script_path}"

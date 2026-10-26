@@ -1,19 +1,136 @@
 import uuid
 from datetime import datetime, timedelta
 import logging
+import re
 from urllib.parse import urlparse
 from typing import List, Dict
+
+import requests
+import urllib3
 
 from py3xui import Api, Client, Inbound
 
 from shop_bot.data_manager.database import get_host, get_key_by_email, get_setting
 
+# Disable TLS warning noise when verifying self-signed 3X-UI panel certificates
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 logger = logging.getLogger(__name__)
 
+# Persistent host sessions to retain CSRF tokens and cookies between calls
+_HOST_SESSIONS: Dict[str, requests.Session] = {}
+
+
+def get_or_create_host_session(base_url: str) -> requests.Session:
+    """Retrieve or initialize a persistent requests.Session for the host base URL."""
+    clean_base = base_url.rstrip("/")
+    session = _HOST_SESSIONS.get(clean_base)
+    if session is None:
+        session = requests.Session()
+        _HOST_SESSIONS[clean_base] = session
+    return session
+
+
+def _bind_session_to_api(api: Api, session: requests.Session) -> None:
+    """
+    Bind requests.Session to py3xui Api instance and its sub-APIs (client, inbound, database, server).
+    Ensures all underlying HTTP calls route through session and preserve X-Csrf-Token and session cookies.
+    """
+    setattr(api, "http_session", session)
+    setattr(api, "_http_session", session)
+
+    sub_apis = [
+        getattr(api, "client", None),
+        getattr(api, "inbound", None),
+        getattr(api, "database", None),
+        getattr(api, "server", None),
+    ]
+
+    for sub in sub_apis:
+        if not sub:
+            continue
+        setattr(sub, "http_session", session)
+        setattr(sub, "_http_session", session)
+
+        orig_request = getattr(sub, "_request_with_retry", None)
+        if orig_request is not None and not getattr(sub, "_session_bound", False):
+            def make_patched(sub_instance, orig_func):
+                def patched_request_with_retry(method, url, headers, **kwargs):
+                    target_method = session.post if getattr(method, "__name__", "") == "post" else (
+                        session.get if getattr(method, "__name__", "") == "get" else session.request
+                    )
+                    req_headers = dict(headers or {})
+                    for k, v in session.headers.items():
+                        if k not in req_headers:
+                            req_headers[k] = v
+                    return orig_func(target_method, url, req_headers, **kwargs)
+                return patched_request_with_retry
+
+            sub._request_with_retry = make_patched(sub, orig_request)
+            sub._session_bound = True
+
+
 def login_to_host(host_url: str, username: str, password: str, inbound_id: int) -> tuple[Api | None, Inbound | None]:
+    base_url = host_url.rstrip("/")
     try:
+        session = get_or_create_host_session(base_url)
+
+        # 1. Probe base URL to initialize session cookie and parse CSRF token
+        try:
+            resp = session.get(f"{base_url}/", verify=False, timeout=10)
+            token_match = re.search(
+                r'name=["\']csrf-token["\']\s+content=["\']([^"\']+)["\']',
+                resp.text,
+                re.IGNORECASE,
+            )
+            if not token_match:
+                # Fallback in case attribute order is reversed: content="..." name="csrf-token"
+                token_match = re.search(
+                    r'content=["\']([^"\']+)["\']\s+name=["\']csrf-token["\']',
+                    resp.text,
+                    re.IGNORECASE,
+                )
+
+            if token_match:
+                csrf_token = token_match.group(1).strip()
+                session.headers["X-Csrf-Token"] = csrf_token
+                logger.debug(f"CSRF token successfully extracted from '{base_url}/'")
+            else:
+                logger.debug(f"No CSRF meta tag found in markup at '{base_url}/', keeping existing session token if any")
+        except Exception as probe_err:
+            logger.warning(f"Failed to probe '{base_url}/' for CSRF token: {probe_err}")
+
+        # 2. Update session headers with origin, referer, XMLHttpRequest
+        session.headers["Origin"] = base_url
+        session.headers["Referer"] = f"{base_url}/"
+        session.headers["X-Requested-With"] = "XMLHttpRequest"
+
+        # 3. Initialize py3xui Api and bind session
         api = Api(host=host_url, username=username, password=password)
+        _bind_session_to_api(api, session)
+
+        current_csrf = session.headers.get("X-Csrf-Token")
+        if current_csrf:
+            if hasattr(api, "csrf_token"):
+                try:
+                    api.csrf_token = current_csrf
+                except Exception:
+                    pass
+            for sub in (getattr(api, "client", None), getattr(api, "inbound", None), getattr(api, "database", None), getattr(api, "server", None)):
+                if sub and hasattr(sub, "csrf_token"):
+                    try:
+                        sub.csrf_token = current_csrf
+                    except Exception:
+                        pass
+
+        # 4. Authenticate via py3xui using active session
         api.login()
+
+        # Ensure session cookie is preserved across session calls
+        if hasattr(api, "session") and api.session and hasattr(api, "cookie_name") and api.cookie_name:
+            session.cookies.set(api.cookie_name, api.session)
+
+        # 5. Fetch target inbound
         inbounds: List[Inbound] = api.inbound.get_list()
         target_inbound = next((inbound for inbound in inbounds if inbound.id == inbound_id), None)
         
@@ -24,6 +141,7 @@ def login_to_host(host_url: str, username: str, password: str, inbound_id: int) 
     except Exception as e:
         logger.error(f"Не удалось выполнить вход или получить входящий трафик для хоста '{host_url}': {e}", exc_info=True)
         return None, None
+
 
 def get_connection_string(inbound: Inbound, user_uuid: str, host_url: str, remark: str) -> str | None:
     if not inbound: return None

@@ -234,5 +234,28 @@
 - Интерактивная кнопка «Запустить харденинг» с анимацией лоадера и выводом терминального лога в реальном времени.
 - Добавлен пункт меню «Безопасность» (`<i class="ti ti-shield-check"></i>`) в сайдбар `base.html`.
 
+## 10. Исправление авторизации в 3X-UI v3.10+ (CSRF Token & Docker Host Trigger)
 
+### 10.1. Устранение ошибки HTTP 403 Forbidden при входе в 3X-UI v3.10.x
+- **Причина**: В версиях 3X-UI 3.x+ (React SPA) Gin-middleware требует обязательного наличия валидной сессионной cookie и заголовка `X-Csrf-Token`, значение которого берется из мета-тега `<meta name="csrf-token" content="...">` при первичном GET-запросе к корню панели (`Web Base Path`). Стандартный метод `api.login()` библиотеки `py3xui` отправлял изолированный POST без CSRF-токена, получая пустой ответ HTTP 403.
+- **Реализация в `src/shop_bot/modules/xui_api.py`**:
+  1. Реализован менеджер персистентных сессий `_HOST_SESSIONS: Dict[str, requests.Session]` с функцией `get_or_create_host_session(base_url)`.
+  2. Перед `api.login()` выполняется `session.get(f"{base_url}/", verify=False, timeout=10)`.
+  3. Регулярным выражением `name=["\']csrf-token["\']\s+content=["\']([^"\']+)["\']` (и обратным порядком атрибутов) извлекается актуальный CSRF-токен.
+  4. Обновляются заголовки `session.headers`:
+     - `Origin`: базовый URL хоста.
+     - `Referer`: базовый URL хоста со слэшем на конце.
+     - `X-Requested-With`: `XMLHttpRequest`.
+     - `X-Csrf-Token`: спарсенный токен.
+  5. Введена функция `_bind_session_to_api(api, session)`, которая подменяет транспортные вызовы `_request_with_retry` у всех суб-API (`client`, `inbound`, `database`, `server`) на методы активного `requests.Session`.
+  6. Благодаря этому заголовок `X-Csrf-Token` и сессионные cookies сохраняются и передаются во всех последующих запросах (создание клиентов, обновление, синхронизация планировщика).
 
+### 10.2. Механизм делегирования харденинга из Docker (Host Trigger)
+- **Причина**: Внутри изолированного Docker-контейнера веб-приложение не имеет доступа к `systemd`, `ufw` и `sysctl` хоста.
+- **Реализация в `src/shop_bot/modules/enhanced_admin_routes.py`**:
+  - При обнаружении Docker (`os.path.exists('/.dockerenv')`):
+    1. Создается файл триггера `data/run_harden.trigger` с метаданными запроса.
+    2. Выполняется опрос (polling до 15 секунд) появления обновленного `data/security_audit.json` либо удаления триггера хост-демоном.
+    3. Клиенту возвращаются актуальные метрики аудита безопасности.
+  - Вне Docker (или на хосте): скрипт `server_security_harden.sh` запускается напрямую через `subprocess` (с дев-эмуляцией для Windows).
+  - В скрипте `src/scripts/server_security_harden.sh` добавлен автоматический сброс файла триггера при запуске (`rm -f "${TRIGGER_FILE}"`).

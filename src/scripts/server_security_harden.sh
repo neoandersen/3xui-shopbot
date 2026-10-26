@@ -10,8 +10,12 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DATA_DIR="${PROJECT_ROOT}/data"
 mkdir -p "${DATA_DIR}"
 AUDIT_JSON="${DATA_DIR}/security_audit.json"
+TRIGGER_FILE="${DATA_DIR}/run_harden.trigger"
 LANDING_DIR="/var/www/neo-vpn-landing"
 AUDIT_HTML="${LANDING_DIR}/audit.html"
+
+# Clear any trigger file on execution start
+rm -f "${TRIGGER_FILE}" 2>/dev/null || true
 
 echo "========================================================================"
 echo "🛡️  NEOVPN SERVER SECURITY HARDENING SUITE"
