@@ -854,6 +854,20 @@ def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboar
     builder.adjust(1)
     return builder.as_markup()
 
+def create_quantity_keyboard(count: int, base_price_usd: float, currency: str = "USD") -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    from shop_bot.services import currency_service
+    builder.button(text="➖ 1", callback_data="qty_minus")
+    builder.button(text=f"{count} шт.", callback_data="qty_noop")
+    builder.button(text="➕ 1", callback_data="qty_plus")
+
+    total_usd = round(base_price_usd * count, 2)
+    formatted = currency_service.format_price(total_usd, currency)
+    builder.button(text=f"💳 Оплатить {formatted}", callback_data="qty_confirm")
+    builder.button(text=(get_setting("btn_back_to_plans") or "⬅️ Назад к тарифам"), callback_data="back_to_plans")
+    builder.adjust(3, 1, 1)
+    return builder.as_markup()
+
 def create_keys_management_keyboard(keys: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if keys:
@@ -861,8 +875,10 @@ def create_keys_management_keyboard(keys: list) -> InlineKeyboardMarkup:
             expiry_date = datetime.fromisoformat(key['expiry_date'])
             status_icon = "✅" if expiry_date > datetime.now() else "❌"
             host_name = key.get('host_name', 'Неизвестный хост')
-            button_text = f"{status_icon} Ключ #{i+1} ({host_name}) (до {expiry_date.strftime('%d.%m.%Y')})"
-            builder.button(text=button_text, callback_data=f"show_key_{key['key_id']}")
+            key_title = key.get('key_name') or f"Ключ #{i+1}"
+            button_text = f"{status_icon} {key_title} ({host_name}) (до {expiry_date.strftime('%d.%m.%Y')})"
+            key_id = key.get('id') if key.get('id') is not None else key.get('key_id')
+            builder.button(text=button_text, callback_data=f"show_key_{key_id}")
     builder.button(text=(get_setting("btn_buy_key") or "➕ Купить новый ключ"), callback_data="buy_new_key")
     builder.button(text=(get_setting("btn_back_to_menu") or "⬅️ Назад в меню"), callback_data="back_to_main_menu")
     builder.adjust(1)
@@ -870,12 +886,13 @@ def create_keys_management_keyboard(keys: list) -> InlineKeyboardMarkup:
 
 def create_key_info_keyboard(key_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    builder.button(text="✏️ Переименовать", callback_data=f"rename_key_{key_id}")
     builder.button(text=(get_setting("btn_extend_key") or "➕ Продлить этот ключ"), callback_data=f"extend_key_{key_id}")
     builder.button(text=(get_setting("btn_show_qr") or "📱 Показать QR-код"), callback_data=f"show_qr_{key_id}")
     builder.button(text=(get_setting("btn_instruction") or "📖 Инструкция"), callback_data=f"howto_vless_{key_id}")
     builder.button(text=(get_setting("btn_switch_server") or "🌍 Сменить сервер"), callback_data=f"switch_server_{key_id}")
     builder.button(text=(get_setting("btn_back_to_keys") or "⬅️ Назад к списку ключей"), callback_data="manage_keys")
-    builder.adjust(1)
+    builder.adjust(2, 1, 1, 1, 1)
     return builder.as_markup()
 
 def create_howto_vless_keyboard() -> InlineKeyboardMarkup:

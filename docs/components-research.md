@@ -303,3 +303,23 @@
 - В `src/shop_bot/data_manager/speedtest_runner.py` команды `speedtest --json` и `speedtest-cli --json` вынесены на первое место в списке `COMMANDS` для совместимости с версией 2.1.3 на целевых хостах.
 - Разработан отказоустойчивый парсер `_extract_json_from_text()`, устойчивый к служебным баннерам в stdout.
 - В `security.html` и `server_security_harden.sh` обновлены описания портов матричного аудита (3X-UI Core 42357, Admin Gateway 8443, Trap SSH 22, VLESS Reality 443).
+
+### 11.5. Архитектура Multi-Key и пакетная покупка (1:N)
+- **Таблица `user_keys`**:
+  - Создана таблица `user_keys (id, user_id, host_id, key_name, client_uuid, email, sub_id, traffic_limit_bytes, created_at, expiry_time, status)`.
+  - Добавлены индексы `idx_user_keys_user_id` и `idx_user_keys_sub_id`.
+  - Реализован хелпер `_format_key_dict()`, гарантирующий как новые атрибуты схемы v1.3.0, так и обратную совместимость для всех существующих обработчиков и веб-панели (`key_id`, `xui_client_uuid`, `key_email`, `expiry_date`, `created_date`, `comment`).
+- **Автомиграция Legacy-ключей**:
+  - Функция `migrate_legacy_keys(conn)` автоматически переносит все существующие ключи из `users.sub_id` и `vpn_keys` в `user_keys` с присвоением имени `Ключ #1 (Основной)` или порядкового номера.
+- **FSM виджет пакетной покупки (1..20 шт.)**:
+  - Состояние `PaymentProcess.waiting_for_quantity`.
+  - Инлайн-виджет `[ ➖ 1 ] [ {count} шт. ] [ ➕ 1 ]`, кнопка подтверждения `[ 💳 Оплатить {сумма} ]` и возврат к тарифам.
+  - Итоговая сумма заказа динамически масштабируется (`цена * количество`), учитывая промокоды и скидки.
+- **Пакетная генерация ключей в 3X-UI**:
+  - В `process_successful_payment` при покупке $N$ ключей выполняется цикл создания $N$ независимых клиентов через `xui_api.py` с уникальными `sub_id`, UUID и CSRF-сессией.
+  - Пользователю отправляется единое сводное сообщение со всеми сгенерированными ссылками на подписку через субдомен `https://sub.neo-vpn.click/sub/{sub_id}` и инлайн-клавиатурой инструкций (iOS, Android, Windows, macOS) в сетке 2x2.
+- **Управление и переименование ключей (Защита от IDOR)**:
+  - В меню «🔑 Мои ключи» отображаются пользовательские имена (`key_name`).
+  - В карточке ключа добавлена кнопка `[ ✏️ Переименовать ]`.
+  - Состояние `KeyRename.waiting_for_key_name` с функцией `rename_user_key(key_id, user_id, new_name)`, строго проверяющей владельца на уровне SQL: `WHERE id = :key_id AND user_id = :telegram_id`.
+

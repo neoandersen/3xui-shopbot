@@ -38,7 +38,7 @@ from shop_bot.modules import xui_api, aaio_payment, cryptomus_payment
 from shop_bot.services import ai_onboarding
 from shop_bot.data_manager.database import (
     get_user, add_new_key, get_user_keys, update_user_stats,
-    register_user_if_not_exists, get_next_key_number, get_key_by_id,
+    register_user_if_not_exists, get_next_key_number, get_key_by_id, rename_user_key,
     update_key_info, set_trial_used, set_terms_agreed, get_setting, get_all_hosts,
     get_plans_for_host, get_plan_by_id, log_transaction, get_referral_count,
     create_pending_transaction, get_all_users,
@@ -94,9 +94,13 @@ class Onboarding(StatesGroup):
     waiting_for_subscription_and_agreement = State()
 
 class PaymentProcess(StatesGroup):
+    waiting_for_quantity = State()
     waiting_for_email = State()
     waiting_for_payment_method = State()
     waiting_for_promo_code = State()
+
+class KeyRename(StatesGroup):
+    waiting_for_key_name = State()
 
  
 class TopUpProcess(StatesGroup):
@@ -1465,6 +1469,10 @@ def get_user_router() -> Router:
             
             final_text = get_key_info_text(key_number, expiry_date, created_date, connection_string)
             
+            custom_name = key_data.get('key_name')
+            if custom_name and not custom_name.startswith("Ключ #"):
+                final_text = f"📱 <b>Устройство:</b> {py_html.escape(custom_name)}\n\n" + final_text
+
             await callback.message.edit_text(
                 text=final_text,
                 reply_markup=keyboards.create_key_info_keyboard(key_id_to_show)
@@ -1472,6 +1480,70 @@ def get_user_router() -> Router:
         except Exception as e:
             logger.error(f"Ошибка показа ключа {key_id_to_show}: {e}")
             await callback.message.edit_text("❌ Произошла ошибка при получении данных ключа.")
+
+    @user_router.callback_query(F.data.startswith("rename_key_"))
+    @registration_required
+    async def rename_key_start(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer()
+        try:
+            key_id = int(callback.data.replace("rename_key_", ""))
+        except Exception:
+            await callback.answer("Неверный ID ключа.", show_alert=True)
+            return
+
+        user_id = callback.from_user.id
+        key_data = get_key_by_id(key_id, user_id=user_id)
+        if not key_data or key_data.get('user_id') != user_id:
+            await callback.answer("❌ Ключ не найден или не принадлежит вам.", show_alert=True)
+            return
+
+        current_name = key_data.get('key_name') or f"Ключ #{key_id}"
+        await state.set_state(KeyRename.waiting_for_key_name)
+        await state.update_data(rename_key_id=key_id)
+
+        builder = InlineKeyboardBuilder()
+        builder.button(text="⬅️ Назад к ключу", callback_data=f"show_key_{key_id}")
+
+        safe_name = py_html.escape(current_name)
+        await callback.message.edit_text(
+            f"✏️ <b>Переименование ключа #{key_id}</b>\n\n"
+            f"Текущее название: <b>{safe_name}</b>\n\n"
+            f"Отправьте текстовым сообщением новое название (например: <i>iPhone 15</i>, <i>Ноутбук</i>, <i>ТВ</i>):",
+            reply_markup=builder.as_markup()
+        )
+
+    @user_router.message(KeyRename.waiting_for_key_name)
+    async def rename_key_finish(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        key_id = data.get('rename_key_id')
+        if not key_id:
+            await state.clear()
+            return
+
+        new_name = (message.text or "").strip()
+        if not new_name:
+            await message.answer("❌ Название не может быть пустым. Введите название ещё раз:")
+            return
+
+        if len(new_name) > 40:
+            new_name = new_name[:40]
+
+        user_id = message.from_user.id
+        ok = rename_user_key(int(key_id), user_id=user_id, new_name=new_name)
+        await state.clear()
+
+        safe_name = py_html.escape(new_name)
+        if ok:
+            builder = InlineKeyboardBuilder()
+            builder.button(text="🔑 К информации о ключе", callback_data=f"show_key_{key_id}")
+            builder.button(text="📋 К списку ключей", callback_data="manage_keys")
+            builder.adjust(1)
+            await message.answer(
+                f"✅ Название ключа успешно изменено на: <b>{safe_name}</b>",
+                reply_markup=builder.as_markup()
+            )
+        else:
+            await message.answer("❌ Не удалось переименовать ключ. Попробуйте позже.")
 
     @user_router.callback_query(F.data.startswith("switch_server_"))
     @registration_required
@@ -1928,10 +2000,41 @@ def get_user_router() -> Router:
         plan_id = int(parts[-3])
         host_name = "_".join(parts[:-3])
 
+        plan = get_plan_by_id(plan_id)
+        if not plan:
+            await callback.message.edit_text("❌ Тариф не найден.")
+            return
+
+        base_price_usd = float(plan['price'])
+        preferred_curr = get_user_preferred_currency(callback.from_user.id)
+
+        if action == "new":
+            quantity = 1
+            await state.update_data(
+                action=action, key_id=key_id, plan_id=plan_id, host_name=host_name,
+                quantity=quantity, base_price_usd=base_price_usd, months=int(plan.get('months', 1))
+            )
+            await state.set_state(PaymentProcess.waiting_for_quantity)
+            total_usd = round(base_price_usd * quantity, 2)
+            formatted_base = currency_service.format_price(base_price_usd, preferred_curr)
+            formatted_total = currency_service.format_price(total_usd, preferred_curr)
+            text = (
+                f"📦 <b>Настройка заказа:</b>\n"
+                f"Тариф: <b>{py_html.escape(plan['plan_name'])}</b> ({formatted_base} / шт.)\n"
+                f"Количество устройств: <b>{quantity} шт.</b>\n\n"
+                f"💰 <b>Итого к оплате:</b> {formatted_total}"
+            )
+            await callback.message.edit_text(
+                text,
+                reply_markup=keyboards.create_quantity_keyboard(quantity, base_price_usd, preferred_curr)
+            )
+            return
+
+        # action == "extend"
         await state.update_data(
-            action=action, key_id=key_id, plan_id=plan_id, host_name=host_name
+            action=action, key_id=key_id, plan_id=plan_id, host_name=host_name,
+            quantity=1, base_price_usd=base_price_usd, months=int(plan.get('months', 1))
         )
-        
         await callback.message.edit_text(
             "📧 Пожалуйста, введите ваш email для отправки чека об оплате.\n\n"
             "Если вы не хотите указывать почту, нажмите кнопку ниже.",
@@ -1939,7 +2042,71 @@ def get_user_router() -> Router:
         )
         await state.set_state(PaymentProcess.waiting_for_email)
 
-    @user_router.callback_query(PaymentProcess.waiting_for_email, F.data == "back_to_plans")
+    async def _render_quantity_widget(callback: types.CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        plan_id = data.get('plan_id')
+        plan = get_plan_by_id(plan_id)
+        if not plan:
+            return
+        qty = int(data.get('quantity', 1))
+        base_price = float(plan['price'])
+        preferred_curr = get_user_preferred_currency(callback.from_user.id)
+        total_usd = round(base_price * qty, 2)
+        formatted_base = currency_service.format_price(base_price, preferred_curr)
+        formatted_total = currency_service.format_price(total_usd, preferred_curr)
+        text = (
+            f"📦 <b>Настройка заказа:</b>\n"
+            f"Тариф: <b>{py_html.escape(plan['plan_name'])}</b> ({formatted_base} / шт.)\n"
+            f"Количество устройств: <b>{qty} шт.</b>\n\n"
+            f"💰 <b>Итого к оплате:</b> {formatted_total}"
+        )
+        try:
+            await callback.message.edit_text(
+                text,
+                reply_markup=keyboards.create_quantity_keyboard(qty, base_price, preferred_curr)
+            )
+        except Exception:
+            pass
+
+    @user_router.callback_query(PaymentProcess.waiting_for_quantity, F.data == "qty_minus")
+    async def qty_minus_handler(callback: types.CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        qty = int(data.get('quantity', 1))
+        if qty <= 1:
+            await callback.answer("Минимальное количество — 1 шт.", show_alert=False)
+            return
+        qty -= 1
+        await state.update_data(quantity=qty)
+        await _render_quantity_widget(callback, state)
+        await callback.answer()
+
+    @user_router.callback_query(PaymentProcess.waiting_for_quantity, F.data == "qty_plus")
+    async def qty_plus_handler(callback: types.CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        qty = int(data.get('quantity', 1))
+        if qty >= 20:
+            await callback.answer("Максимальное количество — 20 шт.", show_alert=False)
+            return
+        qty += 1
+        await state.update_data(quantity=qty)
+        await _render_quantity_widget(callback, state)
+        await callback.answer()
+
+    @user_router.callback_query(PaymentProcess.waiting_for_quantity, F.data == "qty_noop")
+    async def qty_noop_handler(callback: types.CallbackQuery):
+        await callback.answer()
+
+    @user_router.callback_query(PaymentProcess.waiting_for_quantity, F.data == "qty_confirm")
+    async def qty_confirm_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer()
+        await callback.message.edit_text(
+            "📧 Пожалуйста, введите ваш email для отправки чека об оплате.\n\n"
+            "Если вы не хотите указывать почту, нажмите кнопку ниже.",
+            reply_markup=keyboards.create_skip_email_keyboard()
+        )
+        await state.set_state(PaymentProcess.waiting_for_email)
+
+    @user_router.callback_query(F.data == "back_to_plans")
     async def back_to_plans_handler(callback: types.CallbackQuery, state: FSMContext):
         data = await state.get_data()
         action = data.get('action')
@@ -2037,9 +2204,14 @@ def get_user_router() -> Router:
             return
         
         preferred_curr = get_user_preferred_currency(message.chat.id)
-        price = Decimal(str(plan['price']))
+        quantity = int(data.get('quantity', 1))
+        unit_price = Decimal(str(plan['price']))
+        price = unit_price * Decimal(str(quantity))
         final_price = price
         message_text = CHOOSE_PAYMENT_METHOD_MESSAGE
+        if quantity > 1:
+            formatted_unit = currency_service.format_price(float(unit_price), preferred_curr)
+            message_text = f"📦 <b>Количество устройств:</b> {quantity} шт. ({formatted_unit} / шт.)\n\n" + message_text
 
         if user_data.get('referred_by') and user_data.get('total_spent', 0) == 0:
             discount_percentage_str = get_setting("referral_discount") or "0"
@@ -2095,7 +2267,7 @@ def get_user_router() -> Router:
             except Exception:
                 pass
 
-        await state.update_data(final_price=float(final_price))
+        await state.update_data(final_price=float(final_price), quantity=quantity)
 
         # Получаем основной баланс для показа кнопки оплаты с баланса
         try:
@@ -2408,6 +2580,7 @@ def get_user_router() -> Router:
             "user_id": callback.from_user.id,
             "months": months,
             "price": float(price_decimal),
+            "quantity": int(data.get('quantity', 1)),
             "action": data.get('action'),
             "key_id": data.get('key_id'),
             "host_name": data.get('host_name'),
@@ -2597,6 +2770,7 @@ def get_user_router() -> Router:
             "user_id": user_id,
             "months": months,
             "price": price,
+            "quantity": int(data.get('quantity', 1)),
             "action": data.get('action'),
             "key_id": data.get('key_id'),
             "host_name": data.get('host_name'),
@@ -2635,6 +2809,7 @@ def get_user_router() -> Router:
             "user_id": user_id,
             "months": int(plan['months']),
             "price": final_price_usd,
+            "quantity": int(data.get('quantity', 1)),
             "action": data.get('action'),
             "key_id": data.get('key_id'),
             "host_name": data.get('host_name'),
@@ -2703,6 +2878,7 @@ def get_user_router() -> Router:
             "user_id": user_id,
             "months": int(plan['months']),
             "price": final_price_usd,
+            "quantity": int(data.get('quantity', 1)),
             "action": data.get('action'),
             "key_id": data.get('key_id'),
             "host_name": data.get('host_name'),
@@ -3388,8 +3564,57 @@ async def process_successful_payment(bot: Bot, metadata: dict):
         # Цена нужна ниже вне зависимости от ветки
         price = float(metadata.get('price'))
         result = None
-        # Определяем email для операции и вызываем панель для обеих веток (new/extend)
-        if action == "new":
+        quantity = int(metadata.get('quantity', 1))
+        batch_keys = []
+
+        if action == "new" and quantity > 1:
+            for k_idx in range(1, quantity + 1):
+                import secrets
+                token_suffix = secrets.token_hex(3)
+                candidate_email = f"u{user_id}_k{k_idx}_{token_suffix}@bot.local"
+                attempt = 1
+                while get_key_by_email(candidate_email):
+                    attempt += 1
+                    candidate_email = f"u{user_id}_k{k_idx}_{secrets.token_hex(4)}@bot.local"
+                    if attempt > 20:
+                        break
+
+                res = await xui_api.create_or_update_key_on_host(
+                    host_name=host_name,
+                    email=candidate_email,
+                    days_to_add=int(months * 30)
+                )
+                if res:
+                    sub_id = res.get('sub_id') or secrets.token_hex(16)
+                    k_name = f"Ключ #{k_idx}"
+                    kid = add_new_key(
+                        user_id=user_id,
+                        host_name=host_name,
+                        xui_client_uuid=res['client_uuid'],
+                        key_email=res['email'],
+                        expiry_timestamp_ms=res['expiry_timestamp_ms'],
+                        sub_id=sub_id,
+                        key_name=k_name
+                    )
+                    batch_keys.append({
+                        'key_id': kid,
+                        'key_name': k_name,
+                        'connection_string': res.get('connection_string') or f"https://sub.neo-vpn.click/sub/{sub_id}",
+                        'expiry_date': datetime.fromtimestamp(res['expiry_timestamp_ms'] / 1000)
+                    })
+
+            if not batch_keys:
+                await processing_message.edit_text("❌ Не удалось создать ключи в панели.")
+                return
+
+            key_id = batch_keys[0]['key_id']
+            result = {
+                'client_uuid': '',
+                'email': '',
+                'expiry_timestamp_ms': int(batch_keys[0]['expiry_date'].timestamp() * 1000),
+                'connection_string': batch_keys[0]['connection_string']
+            }
+        elif action == "new":
             # Сформируем email в формате {username}@bot.local с авто-суффиксом при коллизиях
             user_data = get_user(user_id) or {}
             raw_username = (user_data.get('username') or f'user{user_id}').lower()
@@ -3407,6 +3632,27 @@ async def process_successful_payment(bot: Bot, metadata: dict):
                     candidate_local = f"{base_local}-{int(datetime.now().timestamp())}"
                     candidate_email = f"{candidate_local}@bot.local"
                     break
+
+            result = await xui_api.create_or_update_key_on_host(
+                host_name=host_name,
+                email=candidate_email,
+                days_to_add=int(months * 30)
+            )
+            if not result:
+                await processing_message.edit_text("❌ Не удалось создать ключ в панели.")
+                return
+
+            all_existing = get_user_keys(user_id)
+            default_kname = "Ключ #1 (Основной)" if len(all_existing) == 0 else f"Ключ #{len(all_existing) + 1}"
+            key_id = add_new_key(
+                user_id=user_id,
+                host_name=host_name,
+                xui_client_uuid=result['client_uuid'],
+                key_email=result['email'],
+                expiry_timestamp_ms=result['expiry_timestamp_ms'],
+                sub_id=result.get('sub_id'),
+                key_name=default_kname
+            )
         else:
             # Продление существующего ключа — достаём email по key_id
             existing_key = get_key_by_id(key_id)
@@ -3415,24 +3661,15 @@ async def process_successful_payment(bot: Bot, metadata: dict):
                 return
             candidate_email = existing_key['key_email']
 
-        result = await xui_api.create_or_update_key_on_host(
-            host_name=host_name,
-            email=candidate_email,
-            days_to_add=int(months * 30)
-        )
-        if not result:
-            await processing_message.edit_text("❌ Не удалось создать/обновить ключ в панели.")
-            return
-
-        if action == "new":
-            key_id = add_new_key(
-                user_id=user_id,
+            result = await xui_api.create_or_update_key_on_host(
                 host_name=host_name,
-                xui_client_uuid=result['client_uuid'],
-                key_email=result['email'],
-                expiry_timestamp_ms=result['expiry_timestamp_ms']
+                email=candidate_email,
+                days_to_add=int(months * 30)
             )
-        elif action == "extend":
+            if not result:
+                await processing_message.edit_text("❌ Не удалось продлить ключ в панели.")
+                return
+
             update_key_info(key_id, result['client_uuid'], result['expiry_timestamp_ms'])
 
         # Начисляем реферальное вознаграждение по покупке — применяется для new и extend
@@ -3630,30 +3867,47 @@ async def process_successful_payment(bot: Bot, metadata: dict):
         except Exception:
             pass
         
-        connection_string = None
-        new_expiry_date = None
-        try:
-            connection_string = result.get('connection_string') if isinstance(result, dict) else None
-            new_expiry_date = datetime.fromtimestamp(result['expiry_timestamp_ms'] / 1000) if isinstance(result, dict) and 'expiry_timestamp_ms' in result else None
-        except Exception:
+        if action == "new" and quantity > 1:
+            msg_lines = [
+                f"🎉 <b>Успешная оплата пакета ключей ({len(batch_keys)} шт.)!</b>\n",
+                f"🌍 Сервер: <b>{host_name}</b>",
+                f"📅 Срок действия: <b>до {batch_keys[0]['expiry_date'].strftime('%d.%m.%Y %H:%M')}</b>\n",
+                "🔑 <b>Ваши персональные ссылки на подписку:</b>\n"
+            ]
+            for k in batch_keys:
+                msg_lines.append(f"📌 <b>{k['key_name']}:</b>\n<code>{k['connection_string']}</code>\n")
+            msg_lines.append("<i>💡 Скопируйте ссылку и импортируйте в любое поддерживаемое приложение (Happ, v2rayNG, Streisand, Hiddify, FoXray).</i>")
+            final_text = "\n".join(msg_lines)
+            await bot.send_message(
+                chat_id=user_id,
+                text=final_text,
+                reply_markup=keyboards.create_howto_vless_keyboard_key(batch_keys[0]['key_id'])
+            )
+        else:
             connection_string = None
             new_expiry_date = None
-        
-        all_user_keys = get_user_keys(user_id)
-        key_number = next((i + 1 for i, key in enumerate(all_user_keys) if key['key_id'] == key_id), len(all_user_keys))
+            try:
+                connection_string = result.get('connection_string') if isinstance(result, dict) else None
+                new_expiry_date = datetime.fromtimestamp(result['expiry_timestamp_ms'] / 1000) if isinstance(result, dict) and 'expiry_timestamp_ms' in result else None
+            except Exception:
+                connection_string = None
+                new_expiry_date = None
+            
+            all_user_keys = get_user_keys(user_id)
+            key_number = next((i + 1 for i, key in enumerate(all_user_keys) if key['key_id'] == key_id), len(all_user_keys))
 
-        final_text = get_purchase_success_text(
-            action="создан" if action == "new" else "продлен",
-            key_number=key_number,
-            expiry_date=new_expiry_date or datetime.now(),
-            connection_string=connection_string or ""
-        )
-        
-        await bot.send_message(
-            chat_id=user_id,
-            text=final_text,
-            reply_markup=keyboards.create_howto_vless_keyboard_key(key_id)
-        )
+            final_text = get_purchase_success_text(
+                action="создан" if action == "new" else "продлен",
+                key_number=key_number,
+                expiry_date=new_expiry_date or datetime.now(),
+                connection_string=connection_string or ""
+            )
+            
+            await bot.send_message(
+                chat_id=user_id,
+                text=final_text,
+                reply_markup=keyboards.create_howto_vless_keyboard_key(key_id)
+            )
 
         try:
             await notify_admin_of_purchase(bot, metadata)

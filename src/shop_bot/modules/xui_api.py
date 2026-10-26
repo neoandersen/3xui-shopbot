@@ -342,7 +342,8 @@ async def create_or_update_key_on_host(host_name: str, email: str, days_to_add: 
         "email": email,
         "expiry_timestamp_ms": new_expiry_ms,
         "connection_string": connection_string,
-        "host_name": host_name
+        "host_name": host_name,
+        "sub_id": client_sub_token or client_uuid
     }
 
 async def get_key_details_from_host(key_data: dict) -> dict | None:

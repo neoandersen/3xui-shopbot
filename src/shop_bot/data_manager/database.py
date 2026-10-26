@@ -20,6 +20,68 @@ def normalize_host_name(name: str | None) -> str:
         s = s.replace(ch, "")
     return s
 
+def migrate_legacy_keys(conn: sqlite3.Connection):
+    """Auto-migrate legacy keys from users (users.sub_id) and vpn_keys into user_keys."""
+    cur = conn.cursor()
+    # 1. From users table (if sub_id exists in users)
+    try:
+        cur.execute("PRAGMA table_info(users)")
+        cols = {row[1] for row in cur.fetchall()}
+        if 'sub_id' in cols:
+            cur.execute("SELECT telegram_id, host_id, client_uuid, email, sub_id, expiry_time FROM users WHERE sub_id IS NOT NULL AND sub_id != ''")
+            for row in cur.fetchall():
+                tg_id, host_id, uuid_val, email_val, sub_id_val, exp_val = row
+                if not sub_id_val:
+                    continue
+                cur.execute("SELECT id FROM user_keys WHERE sub_id = ?", (sub_id_val,))
+                if not cur.fetchone():
+                    c_uuid = uuid_val or f"legacy-{sub_id_val}"
+                    c_email = email_val or f"u{tg_id}_k1"
+                    c_exp = int(exp_val or 0)
+                    cur.execute("""
+                        INSERT OR IGNORE INTO user_keys (user_id, host_id, key_name, client_uuid, email, sub_id, expiry_time, status)
+                        VALUES (?, ?, 'Ключ #1 (Основной)', ?, ?, ?, ?, 'active')
+                    """, (tg_id, host_id or 1, c_uuid, c_email, sub_id_val, c_exp))
+    except Exception as e:
+        logger.warning(f"Error migrating legacy keys from users: {e}")
+
+    # 2. From vpn_keys table if exists
+    try:
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vpn_keys'")
+        if cur.fetchone():
+            cur.execute("SELECT key_id, user_id, host_name, xui_client_uuid, key_email, expiry_date, created_date, comment FROM vpn_keys")
+            for row in cur.fetchall():
+                key_id, user_id, host_name, xui_uuid, email, expiry_date, created_date, comment = row
+                if not email:
+                    continue
+                cur.execute("SELECT id FROM user_keys WHERE email = ?", (email,))
+                if not cur.fetchone():
+                    exp_ms = 0
+                    if expiry_date:
+                        try:
+                            dt = datetime.fromisoformat(str(expiry_date))
+                            exp_ms = int(dt.timestamp() * 1000)
+                        except Exception:
+                            exp_ms = 0
+                    kname = comment if comment else ("Ключ #1 (Основной)" if key_id == 1 else f"Ключ #{key_id}")
+                    sub_id = xui_uuid or f"sub_{key_id}_{user_id}"
+                    cur.execute("SELECT id FROM user_keys WHERE sub_id = ?", (sub_id,))
+                    if cur.fetchone():
+                        import secrets
+                        sub_id = f"{sub_id}_{secrets.token_hex(4)}"
+                    c_uuid = xui_uuid or f"uuid-{key_id}"
+                    cur.execute("SELECT id FROM user_keys WHERE client_uuid = ?", (c_uuid,))
+                    if cur.fetchone():
+                        import secrets
+                        c_uuid = f"{c_uuid}_{secrets.token_hex(4)}"
+                    cur.execute("""
+                        INSERT OR IGNORE INTO user_keys (id, user_id, host_id, host_name, key_name, client_uuid, email, sub_id, created_at, expiry_time, status)
+                        VALUES (?, ?, 1, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?, 'active')
+                    """, (key_id, user_id, host_name or '', kname, c_uuid, email, sub_id, created_date, exp_ms))
+    except Exception as e:
+        logger.warning(f"Error migrating legacy keys from vpn_keys: {e}")
+    conn.commit()
+
 def initialize_db():
     try:
         with sqlite3.connect(DB_FILE) as conn:
@@ -53,6 +115,28 @@ def initialize_db():
                     is_gift BOOLEAN DEFAULT 0
                 )
             ''')
+
+            # v1.3.0 Multi-key Architecture Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_keys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    host_id INTEGER NOT NULL DEFAULT 1,
+                    host_name TEXT,
+                    key_name TEXT NOT NULL DEFAULT 'Ключ',
+                    client_uuid TEXT NOT NULL UNIQUE,
+                    email TEXT NOT NULL UNIQUE,
+                    sub_id TEXT NOT NULL UNIQUE,
+                    traffic_limit_bytes INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expiry_time INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    FOREIGN KEY (user_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+                )
+            ''')
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_keys_user_id ON user_keys(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_keys_sub_id ON user_keys(sub_id)")
+
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS promo_codes (
                     promo_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -429,6 +513,11 @@ def initialize_db():
                 conn.commit()
             except Exception as e:
                 logging.warning(f"Ошибка при миграции host_speedtests: {e}")
+            # v1.3.0: Автомиграция legacy-ключей в user_keys
+            try:
+                migrate_legacy_keys(conn)
+            except Exception as e:
+                logging.warning(f"Ошибка вызова migrate_legacy_keys: {e}")
             
             logging.info("База данных успешно инициализирована.")
     except sqlite3.Error as e:
@@ -2428,16 +2517,91 @@ def get_paginated_transactions(page: int = 1, per_page: int = 15) -> tuple[list[
 def set_trial_used(telegram_id: int):
     record_trial_granted(telegram_id)
 
-def add_new_key(user_id: int, host_name: str, xui_client_uuid: str, key_email: str, expiry_timestamp_ms: int):
+def _format_key_dict(row: Any) -> dict | None:
+    if row is None:
+        return None
+    d = dict(row)
+    key_id = d.get('id') if d.get('id') is not None else d.get('key_id')
+    exp_ms = d.get('expiry_time')
+    exp_date = d.get('expiry_date')
+    if not exp_date and exp_ms:
+        try:
+            exp_date = datetime.fromtimestamp(exp_ms / 1000).isoformat()
+        except Exception:
+            exp_date = str(d.get('created_at') or '')
+    elif exp_date and not exp_ms:
+        try:
+            exp_ms = int(datetime.fromisoformat(str(exp_date)).timestamp() * 1000)
+        except Exception:
+            exp_ms = 0
+
+    c_uuid = d.get('client_uuid') or d.get('xui_client_uuid') or ''
+    email = d.get('email') or d.get('key_email') or ''
+    kname = d.get('key_name') or d.get('comment') or (f"Ключ #{key_id}" if key_id else "Ключ")
+    created = str(d.get('created_at') or d.get('created_date') or datetime.now().isoformat())
+
+    return {
+        'id': key_id,
+        'key_id': key_id,
+        'user_id': d.get('user_id'),
+        'host_id': d.get('host_id', 1),
+        'host_name': d.get('host_name', ''),
+        'key_name': kname,
+        'comment': kname,
+        'client_uuid': c_uuid,
+        'xui_client_uuid': c_uuid,
+        'email': email,
+        'key_email': email,
+        'sub_id': d.get('sub_id') or c_uuid,
+        'expiry_time': exp_ms or 0,
+        'expiry_date': exp_date or created,
+        'created_at': created,
+        'created_date': created,
+        'status': d.get('status', 'active'),
+        'traffic_limit_bytes': d.get('traffic_limit_bytes', 0)
+    }
+
+def add_new_key(
+    user_id: int,
+    host_name: str,
+    xui_client_uuid: str,
+    key_email: str,
+    expiry_timestamp_ms: int,
+    sub_id: str | None = None,
+    key_name: str | None = None,
+    host_id: int = 1
+) -> int | None:
     try:
+        import secrets
+        final_sub_id = (sub_id or secrets.token_hex(16)).strip()
+        final_key_name = key_name or "Ключ"
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            expiry_date = datetime.fromtimestamp(expiry_timestamp_ms / 1000)
-            cursor.execute(
-                "INSERT INTO vpn_keys (user_id, host_name, xui_client_uuid, key_email, expiry_date) VALUES (?, ?, ?, ?, ?)",
-                (user_id, host_name, xui_client_uuid, key_email, expiry_date)
-            )
+            expiry_date = datetime.fromtimestamp(expiry_timestamp_ms / 1000) if expiry_timestamp_ms else datetime.now()
+            # 1. Insert into user_keys (v1.3.0 multi-key primary)
+            cursor.execute("""
+                INSERT INTO user_keys (
+                    user_id, host_id, host_name, key_name,
+                    client_uuid, email, sub_id, expiry_time, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+            """, (
+                user_id, host_id, host_name, final_key_name,
+                xui_client_uuid, key_email, final_sub_id, int(expiry_timestamp_ms or 0)
+            ))
             new_key_id = cursor.lastrowid
+
+            # 2. Maintain vpn_keys table sync for backwards compatibility
+            try:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO vpn_keys (
+                        key_id, user_id, host_name, xui_client_uuid, key_email, expiry_date, comment
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    new_key_id, user_id, host_name, xui_client_uuid, key_email, expiry_date, final_key_name
+                ))
+            except Exception as e_vpn:
+                logger.debug(f"vpn_keys sync notice: {e_vpn}")
+
             conn.commit()
             return new_key_id
     except sqlite3.Error as e:
@@ -2448,8 +2612,9 @@ def delete_key_by_email(email: str) -> bool:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM vpn_keys WHERE key_email = ?", (email,))
+            cursor.execute("DELETE FROM user_keys WHERE email = ?", (email,))
             affected = cursor.rowcount
+            cursor.execute("DELETE FROM vpn_keys WHERE key_email = ?", (email,))
             conn.commit()
             logger.debug(f"delete_key_by_email('{email}') затронуто={affected}")
             return affected > 0
@@ -2457,52 +2622,101 @@ def delete_key_by_email(email: str) -> bool:
         logging.error(f"Не удалось delete key '{email}': {e}")
         return False
 
-def get_user_keys(user_id: int):
+def get_user_keys(user_id: int) -> list[dict]:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM vpn_keys WHERE user_id = ? ORDER BY key_id", (user_id,))
-            keys = cursor.fetchall()
-            return [dict(key) for key in keys]
+            cursor.execute("SELECT * FROM user_keys WHERE user_id = ? ORDER BY id", (user_id,))
+            rows = cursor.fetchall()
+            if not rows:
+                cursor.execute("SELECT * FROM vpn_keys WHERE user_id = ? ORDER BY key_id", (user_id,))
+                rows = cursor.fetchall()
+            return [_format_key_dict(row) for row in rows]
     except sqlite3.Error as e:
         logging.error(f"Не удалось get keys for user {user_id}: {e}")
         return []
 
-def get_key_by_id(key_id: int):
+def get_key_by_id(key_id: int, user_id: int | None = None) -> dict | None:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM vpn_keys WHERE key_id = ?", (key_id,))
-            key_data = cursor.fetchone()
-            return dict(key_data) if key_data else None
+            if user_id is not None:
+                cursor.execute("SELECT * FROM user_keys WHERE id = ? AND user_id = ?", (key_id, user_id))
+            else:
+                cursor.execute("SELECT * FROM user_keys WHERE id = ?", (key_id,))
+            row = cursor.fetchone()
+            if not row and user_id is None:
+                cursor.execute("SELECT * FROM vpn_keys WHERE key_id = ?", (key_id,))
+                row = cursor.fetchone()
+            elif not row and user_id is not None:
+                cursor.execute("SELECT * FROM vpn_keys WHERE key_id = ? AND user_id = ?", (key_id, user_id))
+                row = cursor.fetchone()
+            return _format_key_dict(row) if row else None
     except sqlite3.Error as e:
         logging.error(f"Не удалось get key by ID {key_id}: {e}")
         return None
 
-def get_key_by_email(key_email: str):
+def get_key_by_email(key_email: str) -> dict | None:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM vpn_keys WHERE key_email = ?", (key_email,))
-            key_data = cursor.fetchone()
-            return dict(key_data) if key_data else None
+            cursor.execute("SELECT * FROM user_keys WHERE email = ?", (key_email,))
+            row = cursor.fetchone()
+            if not row:
+                cursor.execute("SELECT * FROM vpn_keys WHERE key_email = ?", (key_email,))
+                row = cursor.fetchone()
+            return _format_key_dict(row) if row else None
     except sqlite3.Error as e:
         logging.error(f"Не удалось get key by email {key_email}: {e}")
         return None
+
+def rename_user_key(key_id: int, user_id: int, new_name: str) -> bool:
+    """Rename user key with strict IDOR verification (WHERE id = :key_id AND user_id = :telegram_id)."""
+    try:
+        cleaned_name = (new_name or "").strip()[:40]
+        if not cleaned_name:
+            return False
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE user_keys SET key_name = ? WHERE id = ? AND user_id = ?",
+                (cleaned_name, key_id, user_id)
+            )
+            affected = cursor.rowcount
+            if affected > 0:
+                try:
+                    cursor.execute(
+                        "UPDATE vpn_keys SET comment = ? WHERE key_id = ? AND user_id = ?",
+                        (cleaned_name, key_id, user_id)
+                    )
+                except Exception:
+                    pass
+            conn.commit()
+            return affected > 0
+    except sqlite3.Error as e:
+        logging.error(f"Failed to rename key {key_id} for user {user_id}: {e}")
+        return False
 
 def update_key_info(key_id: int, new_xui_uuid: str, new_expiry_ms: int):
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             expiry_date = datetime.fromtimestamp(new_expiry_ms / 1000)
-            cursor.execute("UPDATE vpn_keys SET xui_client_uuid = ?, expiry_date = ? WHERE key_id = ?", (new_xui_uuid, expiry_date, key_id))
+            cursor.execute(
+                "UPDATE user_keys SET client_uuid = ?, expiry_time = ? WHERE id = ?",
+                (new_xui_uuid, int(new_expiry_ms), key_id)
+            )
+            cursor.execute(
+                "UPDATE vpn_keys SET xui_client_uuid = ?, expiry_date = ? WHERE key_id = ?",
+                (new_xui_uuid, expiry_date, key_id)
+            )
             conn.commit()
     except sqlite3.Error as e:
         logging.error(f"Не удалось update key {key_id}: {e}")
- 
+
 def update_key_host_and_info(key_id: int, new_host_name: str, new_xui_uuid: str, new_expiry_ms: int):
     """Update key's host, UUID and expiry in a single transaction."""
     try:
@@ -2510,6 +2724,10 @@ def update_key_host_and_info(key_id: int, new_host_name: str, new_xui_uuid: str,
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             expiry_date = datetime.fromtimestamp(new_expiry_ms / 1000)
+            cursor.execute(
+                "UPDATE user_keys SET host_name = ?, client_uuid = ?, expiry_time = ? WHERE id = ?",
+                (new_host_name, new_xui_uuid, int(new_expiry_ms), key_id)
+            )
             cursor.execute(
                 "UPDATE vpn_keys SET host_name = ?, xui_client_uuid = ?, expiry_date = ? WHERE key_id = ?",
                 (new_host_name, new_xui_uuid, expiry_date, key_id)
@@ -2528,21 +2746,30 @@ def get_keys_for_host(host_name: str) -> list[dict]:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM vpn_keys WHERE TRIM(host_name) = TRIM(?)", (host_name,))
-            keys = cursor.fetchall()
-            return [dict(key) for key in keys]
+            cursor.execute("SELECT * FROM user_keys WHERE TRIM(host_name) = TRIM(?)", (host_name,))
+            rows = cursor.fetchall()
+            if not rows:
+                cursor.execute("SELECT * FROM vpn_keys WHERE TRIM(host_name) = TRIM(?)", (host_name,))
+                rows = cursor.fetchall()
+            return [_format_key_dict(row) for row in rows]
     except sqlite3.Error as e:
         logging.error(f"Не удалось get keys for host '{host_name}': {e}")
         return []
 
-def get_all_vpn_users():
+def get_all_vpn_users() -> list[dict]:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT user_id FROM vpn_keys")
-            users = cursor.fetchall()
-            return [dict(user) for user in users]
+            cursor.execute("SELECT DISTINCT user_id FROM user_keys")
+            rows = cursor.fetchall()
+            if not rows:
+                cursor.execute("SELECT DISTINCT user_id FROM vpn_keys")
+                rows = cursor.fetchall()
+            return [dict(user) for user in rows]
+    except sqlite3.Error as e:
+        logging.error(f"Не удалось get all vpn users: {e}")
+        return []
     except sqlite3.Error as e:
         logging.error(f"Не удалось get all vpn users: {e}")
         return []
