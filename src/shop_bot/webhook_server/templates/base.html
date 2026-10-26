@@ -96,6 +96,11 @@
 						<i class="ti ti-puzzle"></i>
 						<span>Конструктор</span>
 					</a>
+					<a href="{{ url_for('security_dashboard_page') }}" class="xui-nav-item {% if request.endpoint == 'security_dashboard_page' %}active{% endif %}" data-nav-text="безопасность периметр фаервол ufw fail2ban ssh security hardening">
+						<i class="ti ti-shield-check"></i>
+						<span>Безопасность</span>
+						<span class="badge bg-green-lt ms-auto fs-5">Щит</span>
+					</a>
 					<a href="{{ url_for('settings_page') }}" class="xui-nav-item {% if request.endpoint == 'settings_page' %}active{% endif %}" data-nav-text="настройки конфигурация settings config">
 						<i class="ti ti-settings"></i>
 						<span>Настройки</span>
@@ -147,6 +152,8 @@
 								<i class="ti ti-activity text-primary me-1"></i> <span class="fw-bold">Монитор серверов</span>
 							{% elif request.endpoint == 'button_constructor_page' %}
 								<i class="ti ti-puzzle text-primary me-1"></i> <span class="fw-bold">Конструктор меню</span>
+							{% elif request.endpoint == 'security_dashboard_page' %}
+								<i class="ti ti-shield-check text-success me-1"></i> <span class="fw-bold">Безопасность периметра</span>
 							{% elif request.endpoint == 'settings_page' %}
 								<i class="ti ti-settings text-primary me-1"></i> <span class="fw-bold">Настройки системы</span>
 							{% else %}

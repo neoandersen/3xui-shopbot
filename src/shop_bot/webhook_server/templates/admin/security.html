@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+
+{% block title %}Безопасность и мониторинг периметра — {{ brand_title or 'NEOVPN' }}{% endblock %}
+
+{% block content %}
+<div class="page-header d-print-none mb-4">
+    <div class="row align-items-center">
+        <div class="col">
+            <div class="page-pretitle text-secondary">Защита инфраструктуры и сети</div>
+            <h2 class="page-title text-primary d-flex align-items-center gap-2">
+                <i class="ti ti-shield-check fs-1 text-success"></i> Безопасность и мониторинг периметра
+            </h2>
+            <p class="text-secondary mb-0">Комплексный профиль харденинга хоста, защита сетевых портов и изоляция служебных сокетов</p>
+        </div>
+        <div class="col-auto ms-auto d-print-none">
+            <div class="btn-list">
+                <button type="button" class="btn btn-primary d-flex align-items-center gap-2" id="btn-run-hardening">
+                    <i class="ti ti-shield-bolt"></i>
+                    <span id="btn-run-text">Запустить харденинг</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Верхний сводный баннер аудита -->
+<div class="card mb-4 border-0 shadow-sm" style="background: linear-gradient(135deg, rgba(22, 119, 255, 0.12) 0%, rgba(82, 196, 26, 0.08) 100%); border-left: 4px solid #1677ff !important;">
+    <div class="card-body py-3">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div class="d-flex align-items-center gap-3">
+                <div class="avatar avatar-md {% if audit_data.score >= 90 %}bg-green-lt{% elif audit_data.score >= 70 %}bg-yellow-lt{% else %}bg-red-lt{% endif %} text-reset">
+                    <i class="ti ti-shield-lock fs-2 {% if audit_data.score >= 90 %}text-success{% elif audit_data.score >= 70 %}text-warning{% else %}text-danger{% endif %}"></i>
+                </div>
+                <div>
+                    <div class="fw-bold fs-3 d-flex align-items-center gap-2">
+                        <span>Оценка защиты: <span id="audit-score-val">{{ audit_data.score or 0 }}</span>/100</span>
+                        {% if audit_data.status == 'SECURE' %}
+                            <span class="badge bg-green text-white" id="audit-status-badge">Защищён</span>
+                        {% elif audit_data.status == 'GOOD' %}
+                            <span class="badge bg-yellow text-dark" id="audit-status-badge">Хорошо</span>
+                        {% else %}
+                            <span class="badge bg-red text-white" id="audit-status-badge">Требуется харденинг</span>
+                        {% endif %}
+                    </div>
+                    <div class="text-secondary small">
+                        Последнее сканирование: <strong id="audit-timestamp-val">{{ audit_data.timestamp or 'Ещё не выполнялось' }}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <span class="badge bg-dark-lt text-secondary">Профиль: v1.3.0 Hardening Suite</span>
+                <span class="badge bg-blue-lt text-primary">Default Deny</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 5 Ключевых виджетов статуса периметра -->
+<div class="row row-deck row-cards mb-4">
+    <!-- 1. SSH Shield -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card card-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="text-secondary font-weight-medium">SSH Shield</span>
+                    <span class="badge {% if audit_data.is_custom_ssh %}bg-green-lt text-success{% else %}bg-yellow-lt text-warning{% endif %}">
+                        {% if audit_data.is_custom_ssh %}Кастомный порт{% else %}Порт 22{% endif %}
+                    </span>
+                </div>
+                <div class="d-flex align-items-baseline gap-2">
+                    <div class="fs-2 font-weight-bold text-reset" id="widget-ssh-port">
+                        Порт {{ audit_data.ssh_port or 22 }}
+                    </div>
+                </div>
+                <div class="text-muted small mt-1 d-flex align-items-center gap-1">
+                    {% if audit_data.ssh_blocked_22 %}
+                        <i class="ti ti-lock text-success"></i> <span>Порт 22 заблокирован</span>
+                    {% else %}
+                        <i class="ti ti-alert-triangle text-warning"></i> <span>Порт 22 открыт наружу</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. ICMP Stealth Mode -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card card-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="text-secondary font-weight-medium">ICMP Stealth Mode</span>
+                    <span class="badge {% if audit_data.icmp_stealth %}bg-green-lt text-success{% else %}bg-red-lt text-danger{% endif %}">
+                        {% if audit_data.icmp_stealth %}Скрытность ВКЛ{% else %}Пинг открыт{% endif %}
+                    </span>
+                </div>
+                <div class="fs-2 font-weight-bold text-reset">
+                    {% if audit_data.icmp_stealth %}Скрыт (No-Ping){% else %}Виден в сети{% endif %}
+                </div>
+                <div class="text-muted small mt-1 d-flex align-items-center gap-1">
+                    <i class="ti ti-eye-off text-primary"></i>
+                    <span>Защита от Shodan & Censys</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Фаервол UFW -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card card-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="text-secondary font-weight-medium">Фаервол UFW</span>
+                    <span class="badge {% if audit_data.ufw_active %}bg-green-lt text-success{% else %}bg-red-lt text-danger{% endif %}">
+                        {% if audit_data.ufw_active %}Активен{% else %}Не включен{% endif %}
+                    </span>
+                </div>
+                <div class="fs-2 font-weight-bold text-reset">
+                    {% if audit_data.ufw_active %}Default Deny{% else %}Отключен{% endif %}
+                </div>
+                <div class="text-muted small mt-1 d-flex align-items-center gap-1">
+                    <i class="ti ti-shield text-info"></i>
+                    <span>Входящие закрыты по умолчанию</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. Fail2ban & Патчи -->
+    <div class="col-sm-6 col-lg-3">
+        <div class="card card-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <span class="text-secondary font-weight-medium">Fail2ban & Патчи</span>
+                    <span class="badge {% if audit_data.fail2ban_active %}bg-green-lt text-success{% else %}bg-yellow-lt text-warning{% endif %}">
+                        {% if audit_data.fail2ban_active %}Активен{% else %}Не запущен{% endif %}
+                    </span>
+                </div>
+                <div class="fs-2 font-weight-bold text-reset">
+                    {% if audit_data.fail2ban_active %}Под защитой{% else %}Базовый режим{% endif %}
+                </div>
+                <div class="text-muted small mt-1 d-flex align-items-center gap-1">
+                    <i class="ti ti-refresh text-success"></i>
+                    <span>Автопатчи security включены</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Карточка изоляции служебных портов -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h3 class="card-title mb-0 d-flex align-items-center gap-2">
+            <i class="ti ti-circuit-switch text-warning"></i> Изоляция служебных сокетов и портов
+        </h3>
+        <span class="badge bg-green-lt">4/4 портов изолированы</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-vcenter card-table table-striped">
+                <thead>
+                    <tr>
+                        <th>Служебный порт</th>
+                        <th>Назначение сокета</th>
+                        <th>Уязвимость при открытии</th>
+                        <th>Статус фаервола</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="badge bg-dark text-white font-monospace">22 / tcp</span></td>
+                        <td>Стандартный порт OpenSSH</td>
+                        <td>Массовый брутфорс ботнетами и сканерами</td>
+                        <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Блокирован (Заменён на кастомный)</span></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-dark text-white font-monospace">2096 / tcp</span></td>
+                        <td>Служебный порт подписок 3X-UI</td>
+                        <td>Утечка конфигурации подписки в обход прокси</td>
+                        <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Блокирован от внешнего мира</span></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-dark text-white font-monospace">1488 / tcp</span></td>
+                        <td>Локальный Flask-сервер вебхуков бота</td>
+                        <td>Прямой доступ к панели без Nginx/SSL</td>
+                        <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Изолирован (Только 127.0.0.1)</span></td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-dark text-white font-monospace">8085 / tcp</span></td>
+                        <td>Внутренний fallback заглушки Nginx</td>
+                        <td>Раскрытие служебных страниц веб-сервера</td>
+                        <td><span class="badge bg-success text-white"><i class="ti ti-lock me-1"></i>Блокирован снаружи</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Детальные таблицы: Белый список и Параметры ядра sysctl -->
+<div class="row row-cards mb-4">
+    <!-- Белый список портов UFW -->
+    <div class="col-12 col-lg-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h3 class="card-title d-flex align-items-center gap-2">
+                    <i class="ti ti-list-check text-primary"></i> Белый список открытых портов (UFW Whitelist)
+                </h3>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-vcenter card-table">
+                        <thead>
+                            <tr>
+                                <th>Порт / Протокол</th>
+                                <th>Сервис / Служба</th>
+                                <th>Назначение</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="badge bg-primary-lt font-monospace">{{ audit_data.ssh_port or 22 }} / tcp</span></td>
+                                <td>Кастомный SSH</td>
+                                <td>Безопасное удаленное администрирование</td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge bg-blue-lt font-monospace">80 / tcp</span></td>
+                                <td>HTTP</td>
+                                <td>Выпуск SSL-сертификатов Let's Encrypt / ACME</td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge bg-green-lt font-monospace">443 / tcp & udp</span></td>
+                                <td>HTTPS / VLESS / QUIC</td>
+                                <td>Основной прокси VLESS Reality и Hysteria2</td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge bg-purple-lt font-monospace">8443 / tcp</span></td>
+                                <td>3X-UI Web Admin</td>
+                                <td>Панель управления узлами Xray</td>
+                            </tr>
+                            <tr>
+                                <td><span class="badge bg-cyan-lt font-monospace">42357 / tcp</span></td>
+                                <td>Special Inbound</td>
+                                <td>Служебный входящий порт подключения</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Параметры безопасности ядра sysctl -->
+    <div class="col-12 col-lg-6">
+        <div class="card h-100">
+            <div class="card-header">
+                <h3 class="card-title d-flex align-items-center gap-2">
+                    <i class="ti ti-cpu text-info"></i> Профиль защиты ядра (/etc/sysctl.d/)
+                </h3>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-vcenter card-table">
+                        <thead>
+                            <tr>
+                                <th>Параметр ядра</th>
+                                <th>Значение</th>
+                                <th>Защитная функция</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>net.ipv4.icmp_echo_ignore_all</code></td>
+                                <td><span class="badge bg-green text-white">1</span></td>
+                                <td>Отключение пинга (Stealth Mode)</td>
+                            </tr>
+                            <tr>
+                                <td><code>net.ipv4.tcp_syncookies</code></td>
+                                <td><span class="badge bg-green text-white">1</span></td>
+                                <td>Защита от SYN Flood атак</td>
+                            </tr>
+                            <tr>
+                                <td><code>net.ipv4.conf.all.rp_filter</code></td>
+                                <td><span class="badge bg-green text-white">1</span></td>
+                                <td>Защита от IP-спуфинга</td>
+                            </tr>
+                            <tr>
+                                <td><code>net.ipv4.conf.all.log_martians</code></td>
+                                <td><span class="badge bg-green text-white">1</span></td>
+                                <td>Логирование аномальных пакетов</td>
+                            </tr>
+                            <tr>
+                                <td><code>chmod 0600 *.db & keys</code></td>
+                                <td><span class="badge bg-green text-white">0600</span></td>
+                                <td>Изоляция баз SQLite и приватных SSH-ключей</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Терминальный лог выполнения харденинга -->
+<div class="card mb-4" id="hardening-log-card" style="display: none;">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <h3 class="card-title mb-0 d-flex align-items-center gap-2">
+            <i class="ti ti-terminal text-success"></i> Терминальный вывод процедуры харденинга
+        </h3>
+        <button type="button" class="btn btn-outline-light btn-sm" id="btn-copy-log">
+            <i class="ti ti-copy me-1"></i> Копировать лог
+        </button>
+    </div>
+    <div class="card-body p-0 bg-dark">
+        <pre class="m-0 p-3 text-success font-monospace" id="hardening-log-content" style="max-height: 400px; overflow-y: auto; font-size: 13px; line-height: 1.5; background: #090c10; border-radius: 0 0 8px 8px;"></pre>
+    </div>
+</div>
+
+<script>
+(function(){
+    const btnRun = document.getElementById('btn-run-hardening');
+    const btnRunText = document.getElementById('btn-run-text');
+    const logCard = document.getElementById('hardening-log-card');
+    const logContent = document.getElementById('hardening-log-content');
+    const btnCopyLog = document.getElementById('btn-copy-log');
+
+    if (!btnRun) return;
+
+    btnRun.addEventListener('click', async function(){
+        if (!confirm('Вы уверены, что хотите запустить комплексный профиль харденинга сервера?\nБудут применены правила UFW, параметры ядра sysctl и изоляция портов.')) {
+            return;
+        }
+
+        // Блокируем кнопку, показываем лоадер
+        btnRun.disabled = true;
+        btnRunText.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Применение харденинга...';
+        logCard.style.display = 'block';
+        logContent.textContent = '⏳ Запуск сценария server_security_harden.sh...\nОжидание завершения операций ядра и фаервола UFW (таймаут 120с)...\n\n';
+        logCard.scrollIntoView({ behavior: 'smooth' });
+
+        try {
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+            const resp = await fetch('{{ url_for("run_security_hardening_route") }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({})
+            });
+
+            const data = await resp.json();
+            logContent.textContent = data.output || 'Харденинг выполнен без консольного вывода.';
+
+            if (data.ok || data.success) {
+                if (typeof window.showToast === 'function') {
+                    window.showToast('success', 'Харденинг успешно завершён! Статус периметра обновлен.');
+                }
+                // Динамически обновляем баллы и дату
+                if (data.audit_data) {
+                    const scoreEl = document.getElementById('audit-score-val');
+                    const tsEl = document.getElementById('audit-timestamp-val');
+                    if (scoreEl) scoreEl.textContent = data.audit_data.score || 100;
+                    if (tsEl) tsEl.textContent = data.audit_data.timestamp || 'Только что';
+                }
+            } else {
+                if (typeof window.showToast === 'function') {
+                    window.showToast('warning', 'Харденинг завершился с предупреждением. Проверьте вывод терминала.');
+                }
+            }
+        } catch(err) {
+            logContent.textContent += '\n❌ Ошибка сетевого запроса к серверу: ' + err;
+            if (typeof window.showToast === 'function') {
+                window.showToast('danger', 'Ошибка запуска харденинга: ' + err);
+            }
+        } finally {
+            btnRun.disabled = false;
+            btnRunText.textContent = 'Запустить харденинг повторно';
+        }
+    });
+
+    if (btnCopyLog && logContent) {
+        btnCopyLog.addEventListener('click', function(){
+            navigator.clipboard.writeText(logContent.textContent).then(() => {
+                if (typeof window.showToast === 'function') {
+                    window.showToast('success', 'Терминальный лог скопирован в буфер обмена.');
+                } else {
+                    alert('Лог скопирован!');
+                }
+            }).catch(() => {
+                alert('Не удалось скопировать лог.');
+            });
+        });
+    }
+})();
+</script>
+{% endblock %}

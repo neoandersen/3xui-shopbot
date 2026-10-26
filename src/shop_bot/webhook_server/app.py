@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 from shop_bot.modules import xui_api
+from shop_bot.modules import enhanced_admin_routes
 from shop_bot.bot import handlers
 from shop_bot.bot import keyboards
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -286,6 +287,9 @@ def create_webhook_app(bot_controller_instance):
             cr_sale=cr_sale,
             **common_data
         )
+
+    # --- Модуль безопасности периметра и харденинга (/admin/security) ---
+    enhanced_admin_routes.register_enhanced_admin_routes(flask_app, login_required, get_common_template_data)
 
     @flask_app.route('/dashboard/run-speedtests', methods=['POST'])
     @login_required

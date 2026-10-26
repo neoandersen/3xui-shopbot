@@ -195,4 +195,44 @@
   - `paramiko.ECDSAKey`
 - Поддерживается как беспарольная авторизация, так и зашифрованные ключи с паролем (`password=ssh_password`).
 
+---
+
+## 9. Интеграция профиля безопасности и мониторинга периметра (Security Hardening Suite v1.3.0)
+
+В соответствии со спецификацией [docs/SECURITY_HARDENING&ADMIN_INTEGRATION.md](file:///d:/REPOS/projects/VB/source/3xui-shopbot-main/docs/SECURITY_HARDENING&ADMIN_INTEGRATION.md) в веб-панель интегрирован модуль мониторинга и активной защиты периметра:
+
+### 9.1. Скрипт харденинга периметра: `src/scripts/server_security_harden.sh`
+1. **Динамическое определение SSH-порта**: Чтение слушающего сокета через `ss -tlnp` с фолбэком на директивы `/etc/ssh/sshd_config` и `/etc/ssh/sshd_config.d/*.conf`. Если порт нестандартный, стандартный порт 22 принудительно блокируется в UFW.
+2. **Тюнинг ядра и сети (`/etc/sysctl.d/99-neovpn-security.conf`)**:
+   - `net.ipv4.icmp_echo_ignore_all = 1`: Stealth Mode — сервер не отвечает на ICMP echo (ping) от сетевых сканеров (Shodan, Censys).
+   - `net.ipv4.icmp_ignore_bogus_error_responses = 1`: сохранение валидации Path MTU Discovery.
+   - Защита от SYN Flood: `tcp_syncookies = 1`, `tcp_max_syn_backlog = 4096`.
+   - Защита от IP-спуфинга: `rp_filter = 1`, логирование аномальных пакетов `log_martians = 1`.
+3. **Конфигурация UFW (Default Deny)**:
+   - Входящие закрыты по умолчанию (`default deny incoming`), исходящие разрешены (`default allow outgoing`).
+   - Белый список: `$SSH_PORT/tcp`, `80/tcp`, `443/tcp`, `443/udp`, `8443/tcp`, `42357/tcp`.
+   - Изоляция внутренних сокетов: принудительный deny для `22` (default SSH trap), `2096` (подписки 3X-UI), `1488` (локальный Flask-сервер), `8085` (Nginx fallback).
+4. **Контроль Fail2ban и автоматические патчи**:
+   - Проверка статуса сервиса `fail2ban-client ping`.
+   - Настройка автоматических security-обновлений Debian/Ubuntu через `unattended-upgrades`.
+5. **Фиксация прав на файлы (File Hardening)**:
+   - Права `0600` на SQLite базы (`*.db`) и приватные SSH-ключи в `data/ssh_keys/`.
+   - Права `0700` на директории ключей и `/etc/letsencrypt`.
+6. **Экспорт артефактов**:
+   - JSON-файл аудита: `data/security_audit.json`.
+   - Статический веб-отчет: `/var/www/neo-vpn-landing/audit.html`.
+
+### 9.2. Бэкенд админки: `src/shop_bot/modules/enhanced_admin_routes.py`
+- `GET /admin/security`: загрузка `data/security_audit.json` и рендеринг дашборда безопасности.
+- `POST /admin/security/run` & `POST /admin/api/security/run-hardening`: запуск `server_security_harden.sh` через `subprocess.run` с таймаутом 120 секунд и возвратом JSON-ответа `{ "ok": true, "output": "...", "audit_data": {...} }`.
+- `GET /admin/api/security/status`: API-эндпоинт для polling/проверки текущих метрик защиты.
+
+### 9.3. Фронтенд: `src/shop_bot/webhook_server/templates/admin/security.html`
+- Стилистика 3X-UI / Ant Design Dark (`.card`, `.badge`, `.table-vcenter`).
+- 5 ключевых KPI-виджетов: SSH Shield, ICMP Stealth, UFW Status, Fail2ban & Patches, Служебные порты.
+- Матрица портов (Белый список vs Черный список) и таблица параметров ядра sysctl.
+- Интерактивная кнопка «Запустить харденинг» с анимацией лоадера и выводом терминального лога в реальном времени.
+- Добавлен пункт меню «Безопасность» (`<i class="ti ti-shield-check"></i>`) в сайдбар `base.html`.
+
+
 
