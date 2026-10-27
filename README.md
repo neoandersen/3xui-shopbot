@@ -1,302 +1,246 @@
 <div align="center" markdown>
-      <h1>3X-ui-ShopBot | Telegram-бот для продажи VPN</h1>
+      <h1>3X-UI ShopBot | Enterprise VLESS Reality Ecosystem</h1>
+<p><b>Автоматизированный сервис продажи подписок VLESS Reality через Telegram с веб-панелью управления в стиле 3X-UI</b></p>
+
 <p align="center">
-    <a href="https://github.com/neoandersen/3xui-shopbot?tab=readme-ov-file#%EF%B8%8F-%D1%83%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%BA%D0%B0-%D0%BF%D0%BE%D0%B4-%D0%BA%D0%BB%D1%8E%D1%87">Установка и обновление</a> •
-    <a href="https://github.com/neoandersen/3xui-shopbot?tab=readme-ov-file#-%D0%B1%D0%B0%D0%B3%D0%B8-%D0%B8-%D0%BF%D1%80%D0%B5%D0%B4%D0%BB%D0%BE%D0%B6%D0%B5%D0%BD%D0%B8%D1%8F">Баги и предложения</a> •
-    <a href="#%D0%BF%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%BA%D0%B0-%D0%BF%D0%BE-%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82%D1%83">Поддержка по проекту</a> •
-    <a href="https://t.me/+0a2q3H5G7JU4NDMy">Группа для соискателей</a> •
-    <a href="https://github.com/neoandersen/3xui-shopbot?tab=readme-ov-file#-%D0%B1%D0%B0%D0%B3%D0%B8-%D0%B8-%D0%BF%D1%80%D0%B5%D0%B4%D0%BB%D0%BE%D0%B6%D0%B5%D0%BD%D0%B8%D1%8F">Поддержать проект</a>
+  <a href="#-быстрый-старт-установка-под-ключ">Установка и обновление</a> •
+  <a href="#-нововведения-в-релизе-v130-stable">Что нового в v1.3.0</a> •
+  <a href="#-архитектура-и-возможности">Возможности</a> •
+  <a href="#-настройка-платежных-шлюзов">Платежи</a> •
+  <a href="#-ai-онбординг-и-атрибуция">AI и Маркетинг</a> •
+  <a href="https://t.me/neovpn_supportbot">Поддержка</a>
 </p>
+
 <p align="center">
-  <img alt="release" src="https://img.shields.io/github/v/release/neoandersen/3xui-shopbot?label=release&style=flat-square">
-  <img alt="downloads" src="https://img.shields.io/github/downloads/neoandersen/3xui-shopbot/total?label=downloads&style=flat-square">
-  <img alt="license" src="https://img.shields.io/github/license/neoandersen/3xui-shopbot?label=license&style=flat-square">
-  <img alt="last-commit" src="https://img.shields.io/github/last-commit/neoandersen/3xui-shopbot?label=last%20commit&style=flat-square">
-  <img alt="issues" src="https://img.shields.io/github/issues/neoandersen/3xui-shopbot?label=issues&style=flat-square">
-  <img alt="stars" src="https://img.shields.io/github/stars/neoandersen/3xui-shopbot?label=stars&style=flat-square">
-  <img alt="python" src="https://img.shields.io/badge/python-%E2%89%A53.10-blue?style=flat-square">
+  <img alt="version" src="https://img.shields.io/badge/version-1.3.0--stable-blue?style=flat-square&logo=git">
+  <img alt="python" src="https://img.shields.io/badge/python-≥3.11-3776AB?style=flat-square&logo=python">
+  <img alt="docker" src="https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker">
+  <img alt="telegram" src="https://img.shields.io/badge/aiogram-3.x-2CA5E0?style=flat-square&logo=telegram">
+  <img alt="protocol" src="https://img.shields.io/badge/protocol-VLESS%20Reality-success?style=flat-square">
+  <img alt="license" src="https://img.shields.io/github/license/neoandersen/3xui-shopbot?style=flat-square">
 </p>
 </div>
 
-**3X-ui-ShopBot** — комплексное решение для автоматизированной продажи VLESS‑конфигураций через Telegram с глубокой интеграцией в панель **3x‑ui** и собственной веб‑панелью на базе Tabler.
-
-## [Поддержка по проекту](https://t.me/neovpn_supportbot)
-
-## 👥 Группа для соискателей
-
-Присоединяйтесь к нашей группе: [3xui-shopbot](https://t.me/+0a2q3H5G7JU4NDMy)
+**3X-UI ShopBot** — модульная платформа корпоративного уровня для автоматизированной продажи подписок VLESS Reality. Решение объединяет клиентского Telegram-бота с AI-онбордингом, сквозную маркетинговую аналитику переходов и полнофункциональную административную панель управления кластером серверов 3X-UI.
 
 ---
 
-## 🚀 Возможности
+## ⚡ Нововведения в релизе v1.3.0 Stable
 
-- Полная автоматизация: от регистрации до выдачи ключа после оплаты.
-- Веб‑панель «все‑в‑одном»: сервера, тарифы, пользователи, платежи, логи, спидтесты.
-- Мульти‑хост: любое число серверов 3x‑ui, централизованное управление.
-- Гибкие тарифы: месяцы/цена для каждого хоста.
-- Платежи: YooKassa, CryptoBot, Heleket, TON Connect (опционально чеки YooKassa).
-- Принудительная подписка на канал.
-- Тестовый период (trial).
-- Реферальная система (несколько типов начислений).
-- Встроенная поддержка: внешний саппорт‑бот либо контакт пользователя.
-- Тест скорости по хостам: SSH‑speedtest + сетевой Net‑Probe.
+Версия **v1.3.0** — крупный стабильный релиз, переводящий систему на мультивалютный биллинг, архитектуру множественных ключей (1:N) и комплексную защиту периметра хостов:
 
----
+### 1. Мультивалютное биллинговое ядро (USD Base)
+- **Базовая валюта USD ($)**: Все расчеты стоимости тарифов, пополнения баланса, реферальные начисления и статистика переведены на доллары США (`USD`).
+- **Пользовательский выбор валюты**: Клиенты могут выбирать предпочтительную валюту отображения (`USD`, `EUR`, `UAH`, `RUB`, `KZT`) в профиле с автоматическим пересчетом курсов через локальный 24-часовой кэш.
+- **Снепшот котировок**: Курс конвертации фиксируется в транзакции на момент генерации счета.
 
-## 🖼️ Скриншоты
+### 2. Пакетная покупка и архитектура Multi-Key (1:N)
+- **Таблица `user_keys`**: Поддержка привязки произвольного количества ключей к одному пользователю с индивидуальными именами, UUID и лимитами трафика.
+- **Масштабируемый виджет выбора количества**: Покупка от **1 до 50 ключей** в один клик с автоматическим пересчетом суммы заказа и выдачей единого пакета ссылок.
+- **Управление и безопасность (IDOR Protected)**: Переименование ключей клиентом с жесткой валидацией владельца на уровне SQL-запроса.
 
-<details>
-  <summary><b>Показать скриншоты</b></summary>
-  
-  <br>
-  
-  <table>
-    <tr>
-      <td align="center" valign="top">
-        <a href="docs/screenshots/dashboard.png"><img src="docs/screenshots/dashboard.png" width="480" alt="Dashboard"/></a><br>
-        <sub>Панель — Дашборд</sub>
-      </td>
-      <td align="center" valign="top">
-        <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" width="480" alt="Settings"/></a><br>
-        <sub>Панель — Настройки</sub>
-      </td>
-    </tr>
-    <tr>
-      <td align="center" valign="top">
-        <a href="docs/screenshots/referrals.png"><img src="docs/screenshots/referrals.png" width="480" alt="Referrals"/></a><br>
-        <sub>Рефералы</sub>
-      </td>
-      <td align="center" valign="top">
-        <a href="docs/screenshots/speedtests.png"><img src="docs/screenshots/speedtests.png" width="480" alt="Speedtests"/></a><br>
-        <sub>Спидтесты</sub>
-      </td>
-    </tr>
-    <tr>
-      <td align="center" valign="top">
-        <a href="docs/screenshots/bot-main-menu.png"><img src="docs/screenshots/bot-main-menu.png" width="360" alt="Bot Main Menu"/></a><br>
-        <sub>Бот — Главное меню</sub>
-      </td>
-      <td align="center" valign="top">
-        <a href="docs/screenshots/bot-admin-menu.png"><img src="docs/screenshots/bot-admin-menu.png" width="360" alt="Bot Admin Menu"/></a><br>
-        <sub>Бот — Админ‑меню</sub>
-      </td>
-    </tr>
-    <tr>
-      <td align="center" valign="top">
-        <a href="docs/screenshots/bot-settings.png"><img src="docs/screenshots/bot-settings.png" width="360" alt="Bot Settings"/></a><br>
-        <sub>Бот — Настройки/Помощь</sub>
-      </td>
-      <td align="center" valign="top">
-        <a href="docs/screenshots/button_design.png"><img src="docs/screenshots/button_design.png" width="480" alt="Button Constructor"/></a><br>
-        <sub>Панель — Конструктор кнопок</sub>
-      </td>
-    </tr>
-    <tr>
-      <td align="center" valign="top">
-        <a href="docs/screenshots/monitor.png"><img src="docs/screenshots/monitor.png" width="480" alt="Monitor"/></a><br>
-        <sub>Панель — Мониторинг</sub>
-      </td>
-      <td align="center" valign="top">
-        <a href="docs/screenshots/preview.png"><img src="docs/screenshots/preview.png" width="360" alt="Preview"/></a><br>
-        <sub>Панель — Предпросмотр меню</sub>
-      </td>
-    </tr>
-  </table>
- 
-  <br>
-  <i>Клик по миниатюре откроет оригинал в полном размере.</i>
-</details>
+### 3. Автономный автостарт и отказоустойчивость Telegram API
+- **Автозапуск Polling при старте**: Бот автоматически запускает опрос событий Telegram при старте контейнера без необходимости ручной активации в веб-панели.
+- **Токенизация callback-данных (`safe_cb`)**: Устранено падение `BUTTON_DATA_INVALID` при длинных именах хостов и эмодзи-флагах за счет алгоритмического сжатия `callback_data` под строгий лимит Telegram API в 64 байта.
+- **Санитизация Telegram HTML**: Защита от ошибок парсинга сущностей (`can't parse entities`) при обработке спецсимволов `<`, `>`, `&` в именах пользователей и VLESS-ссылках.
+
+### 4. Интеграция с 3X-UI v3.10+ (CSRF Token & Sessions)
+- **Автоматический сбор CSRF-токена**: Извлечение мета-тега `<meta name="csrf-token">` и сессионных cookie при первичном входе для обхода `HTTP 403 Forbidden` в современных версиях панели.
+- **Персистентный пул сессий**: Поддержание активных HTTP-сессий к нодам с прозрачным обновлением токенов.
+
+### 5. Редизайн веб-панели под стиль 3X-UI (Sidebar Layout)
+- **Двухколоночный интерфейс**: Фиксированный левый сайдбар (250px), адаптивное выкатное меню для мобильных устройств, горячие клавиши быстрого поиска `Ctrl + K` / `Cmd + K`.
+- **Темная неоновая палитра**: Фирменные переменные Ant Design Dark / Space Cyber (`#0b0e14`, `#131926`, `#1677ff`).
+- **Прямой ввод SSH-ключей**: Текстовое поле для вставки приватного ключа RSA/Ed25519 с автонормализацией CRLF -> LF и установкой прав `0600`.
+- **Нормализация ссылок подписки**: Раздельная настройка `sub_domain` и `sub_path` с сокрытием внутренних портов через Nginx.
+
+### 6. Модуль безопасности периметра (Security Hardening Suite)
+- **Скрипт харденинга `server_security_harden.sh`**: Stealth-режим ICMP (игнорирование пингов сетевых сканеров), тюнинг SYN-cookies ядра, принудительный Default-Deny в UFW.
+- **Изоляция служебных портов**: Запрет внешнего доступа к портам `22` (ловушка), `2096` (подписки), `1488` (Flask) и `8085`.
+- **Docker Host Trigger**: Безопасное делегирование запуска харденинга из изолированного контейнера на хост-систему через файл-триггер.
+
+### 7. AI-онбординг и сквозная атрибуция трафика
+- **Интеграция с внешним промоутером (Радар)**: Трекинг маркетинговых тегов (`ref_yt`, `ref_ds`, `ref_rkn`, `ref_mob`, `ref_promo`, `ub_bio`).
+- **Контекстный AI-онбординг (OpenRouter API)**: Генерация персонализированных офферов под боль клиента (YouTube 4K, Discord UDP, обход ТСПУ) со строгим таймаутом 2.5 сек и бесшовным откатом на статические шаблоны.
+- **Дашборд сквозной аналитики `/traffic_stats`**: Отслеживание воронки Клики -> Триалы (CR%) -> Продажи (CR%) -> Выручка ($).
 
 ---
 
-## ⚠️ Требования
+## 🛠️ Функциональные возможности
 
-1) Сервер Ubuntu/Debian с доступом по SSH.
-2) Домен, A‑запись которого уже указывает на IP сервера.
-3) Установленная панель 3x‑ui на одном или нескольких серверах.
+<table>
+  <tr>
+    <th width="30%">Компонент</th>
+    <th>Возможности и особенности реализации</th>
+  </tr>
+  <tr>
+    <td><b>Telegram-бот (Клиент)</b></td>
+    <td>
+      • Полноэкранная кнопка 3-дневного триала на первом ряду (Full-Width)<br>
+      • Симметричная сетка 2x2 инструкций для платформ: iOS, Android, Windows, macOS<br>
+      • Пакетная покупка ключей от 1 до 50 шт. с пересчетом цен в USD<br>
+      • Интерактивное управление ключами: получение ссылки подписки, QR-код, переименование<br>
+      • AI-автоответчик первого контакта в 15-минутном окне после старта
+    </td>
+  </tr>
+  <tr>
+    <td><b>Платежные шлюзы</b></td>
+    <td>
+      • <b>Aaio</b>: банковские карты (World, UAH, RUB, KZT) и СБП (0% для самозанятых/ИП)<br>
+      • <b>Cryptomus</b>: прием криптовалют (USDT, USDC, BTC, TON, ETH, LTC, XMR)<br>
+      • <b>Telegram Stars</b>: официальные цифровые платежи внутри Telegram<br>
+      • <b>YooKassa</b>: российские карты, СБП, опциональная фискализация чеков<br>
+      • <b>CryptoBot & Heleket</b>: прием криптовалютных чеков и инвойсов
+    </td>
+  </tr>
+  <tr>
+    <td><b>Управление нодами 3X-UI</b></td>
+    <td>
+      • Мульти-хостинг: неограниченное число независимых серверов 3x-ui<br>
+      • Поддержка авторизации по паролю и приватным SSH-ключам (RSA, Ed25519, ECDSA)<br>
+      • Замер скорости узлов: SSH-Speedtest (CLI 2.1.3+) и сетевой Net-Probe<br>
+      • Автоматическая синхронизация и привязка потерянных клиентов из панели
+    </td>
+  </tr>
+  <tr>
+    <td><b>Безопасность и мониторинг</b></td>
+    <td>
+      • Центр безопасности периметра в веб-панели (`/admin/security`)<br>
+      • Stealth ICMP Mode и блокировка паразитных сканеров портов<br>
+      • Мониторинг системных ресурсов: CPU, RAM, Disk, Load Average
+    </td>
+  </tr>
+</table>
 
 ---
 
-## 💻 Где купить сервер/домен
+## 💻 Системные требования
 
-Если нет сервера/домена — можно приобрести здесь: [Hostoff](https://hostoff.net)
+- **ОС**: Ubuntu 22.04 / 24.04 LTS, Debian 11 / 12.
+- **Окружение**: Docker Engine 24+ & Docker Compose v2.
+- **Ресурсы сервера**: минимум 1 vCPU, 1 GB RAM, 10 GB NVMe/SSD.
+- **Сеть**: белый IPv4-адрес, домен с настроенными A-записями:
+  - `panel.your-domain.com` — веб-панель управления.
+  - `sub.your-domain.com` — защищенный прокси подписок.
+- **Серверы 3X-UI**: одна или несколько развернутых нод с протоколом VLESS Reality.
 
 ---
 
-## 🛠️ Установка «под ключ»
+## 🚀 Быстрый старт (Установка «под ключ»)
 
-Скрипт поставит Docker, Nginx, Certbot, скачает и развернёт бота и панель.
-
-1) Подключитесь по SSH.
-
-2) Выполните:
+Установочный bash-скрипт автоматически подготовит окружение, установит Docker, Nginx, Certbot, настроит проксирование и развернет контейнеры:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/neoandersen/3xui-shopbot/main/install.sh | sudo bash
 ```
 
-3) Следуйте инструкциям установщика:
+### Ручной запуск через Docker Compose
 
-- Введите домен (например, `shop.example.com`).
-- Укажите email для SSL (Let's Encrypt).
-- Скрипт автоматически поднимет контейнеры и выпишет сертификат.
-
-4) По завершении получите URL панели и первичные доступы:
-
-```
-Веб‑панель: https://your-domain.com/login
-Логин: admin
-Пароль: admin
-```
-
----
-
-## ⚙️ Первичная настройка
-
-1) Войдите в панель (`https://your-domain.com/login`) и сразу смените логин/пароль в «Настройки → Настройки панели».
-2) Заполните Telegram‑параметры: `Токен бота`, `Имя телеграмм бота`, `ID администратора в телеграмме`.
-3) Добавьте хост 3x‑ui в «Настройки → Управление хостами» (URL панели, логин/пароль 3x‑ui, inbound id).
-4) Создайте тарифы для добавленного хоста (месяцы/цена).
-5) Сохраните настройки и нажмите «Запустить бота» в шапке панели.
-
-Бот готов к работе.
-
----
-
-## 💳 Платёжные системы
-
-Откройте «Настройки → Настройки платёжных систем» и заполните соответствующие поля.
-
-### YooKassa
-
-- Укажите `yookassa_shop_id` и `yookassa_secret_key`.
-- В кабинете YooKassa задайте URL вебхука: `https://your-domain.com/yookassa-webhook`
-  Если при установке выбран порт `8443`, то: `https://your-domain.com:8443/yookassa-webhook`
-- При желании добавьте `Почту для чеков`
-
-### CryptoBot
-
-- Получите токен в [@CryptoBot](https://t.me/CryptoBot) → Crypto Pay.
-- Включите вебхуки на `https://your-domain.com/cryptobot-webhook` (или с портом `:8443`).
-- Укажите `cryptobot_token` в настройках.
-
-### Heleket
-
-- Укажите `heleket_merchant_id` и `heleket_api_key`.
-
-### TON Connect (опционально)
-
-- Укажите `ton_wallet_address` и `tonapi_key` для курсов.
-
----
-
-## 🔗 Принудительная подписка и ссылки
-
-В файле БД настроек заданы ключи (управляются через веб‑панель):
-
-- `force_subscription`: включить/выключить обязательную подписку (`true`/`false`).
-- `channel_url`: ссылка на канал/чат для подписки. Бот должен быть админом канала.
-- `terms_url`, `privacy_url`: ссылки на условия и политику — используются в онбординге.
-
-
----
-
-## 🧪 Тест скорости (Speedtest)
-
-Тесты скорости доступны из админ‑меню бота и из панели.
-
-Поддерживаются 2 метода:
-
-- SSH‑Speedtest: запуск `speedtest` или `speedtest-cli` на удалённом сервере по SSH.
-- Net‑Probe: лёгкая сетевая проверка доступности и задержки HTTP с панели до `host_url`.
-
-Результаты сохраняются в БД (`host_speedtests`), отображаются в панели на дашборде у каждого хоста.
-
-### Настройки для SSH‑Speedtest на хосте
-
-Откройте «Настройки → Управление хостами → SSH‑параметры» и заполните:
-
-- `ssh_host` — адрес сервера.
-- `ssh_port` — порт (по умолчанию 22).
-- `ssh_user` — пользователь.
-- `ssh_password` — пароль (или оставьте пустым, если используется ключ).
-- `ssh_key_path` — путь к приватному ключу на машине, где запущена панель (контейнер).
-
-Можно запустить «Автоустановку speedtest» из админ‑меню и из веб панели.
-
-### Запуск
-
-- В боте: Админ‑меню → Speedtest → выбрать хост или «Запустить для всех».
-- В панели: кнопка «Run speedtests» на дашборде (асинхронный запуск на сервере панели).
-
-Фиксируются: `ping_ms`, `jitter_ms`, `download_mbps`, `upload_mbps`, сервер‑узел, статус и ошибки.
-
----
-
-## 🤝 Реферальная система
-
-Основные параметры — в таблице настроек, UI панели: «Настройки → Общие».
-
-Типы начислений:
-
-- Процент с покупки реферала
-- Фиксированная сумма за покупку реферала
-- Фиксированный бонус пригласившему при старте по реферальной ссылке
-
-Дополнительно:
-
-- — скидка для приглашённого (в процентах), если используется.
-- — минимальная сумма на вывод/перевод (если реализовано в вашей бизнес‑логике).
-
-Профиль пользователя отображает: число приглашённых и суммарно заработано по рефералке (см. `get_referral_balance_all`). Рефссылка формируется как `https://t.me/<bot_username>?start=ref_<telegram_id>`.
-
----
-
-## 🆘 Настройки поддержки (Support)
-
-В панели доступны два режима поддержки:
-
-1) Внешний саппорт‑бот
-   - Поля: `support_bot_token`, `support_bot_username`, `support_text`.
-   - Пользователи переходят в отдельного бота по кнопке в разделе «Помощь».
-
-2) Внешний контакт
-   - Поле: `support_user` (например, `@username`).
-   - Кнопка ведёт в личные сообщения указанному контакту.
-
-Дополнительно: `support_forum_chat_id` — ID форума/топиков для расширенных сценариев (при наличии).
-
----
-
-## 🔄 Управление и обновление
-
-Все команды выполняются в каталоге проекта на сервере (папка `3xui-shopbot`).
-
-Просмотр логов в реальном времени:
+Если вы разворачиваете проект из исходного кода:
 
 ```bash
-docker-compose logs -f
+# 1. Клонирование репозитория
+git clone https://github.com/neoandersen/3xui-shopbot.git ~/3xui-shopbot
+cd ~/3xui-shopbot
+
+# 2. Копирование и заполнение конфигурации
+cp config.example.json config.json
+nano config.json
+
+# 3. Запуск контейнеров в фоновом режиме
+docker compose up -d
+
+# 4. Проверка журнала инициализации
+docker compose logs -f 3xui-shopbot
 ```
 
-Остановка контейнеров:
+---
+
+## ⚙️ Первичная настройка экосистемы
+
+1. **Вход в панель управления**: перейдите по адресу `https://panel.your-domain.com/login` (по умолчанию: логин `admin`, пароль `admin`).
+2. **Смена учетных данных**: в разделе **Настройки -> Настройки панели** обязательно задайте новый пароль.
+3. **Подключение Telegram**: укажите токен основного бота (`tg_bot_token`), юзернейм и числовой Telegram ID администратора.
+4. **Добавление узла 3X-UI** (раздел **Настройки -> Управление хостами**):
+   - `Название`: понятное имя ноды (например, `🇩🇪 DE1 Frankfurt`).
+   - `URL панели`: адрес доступа (например, `http://10.0.0.2:2053`).
+   - `Логин и пароль`: учетные данные от панели 3x-ui.
+   - `Inbound ID`: ID входящего подключения VLESS Reality.
+   - `sub_domain` и `sub_path`: параметры публичной ссылки подписки (например, `https://sub.your-domain.com` и `/sub/`).
+   - `SSH-ключ`: вставьте содержимое приватного ключа сервера для работы фоновых спидтестов.
+5. **Создание тарифов**: добавьте тарифные планы с ценами в USD ($) (например, 1 мес. — $2.50, 3 мес. — $7.00, 12 мес. — $29.00).
+
+---
+
+## 💳 Настройка платежных шлюзов
+
+Настройка шлюзов производится в веб-панели (**Настройки -> Настройки платежных систем**):
+
+### Aaio (Банковские карты, СБП)
+- Создайте мерчант в сервисе Aaio.
+- Укажите в панели: `aaio_merchant_id`, `aaio_secret_1`, `aaio_secret_2`.
+- URL вебхука в ЛК Aaio: `https://panel.your-domain.com/webhook/aaio`.
+
+### Cryptomus (Криптовалюты)
+- Зарегистрируйте бизнес-аккаунт Cryptomus.
+- Укажите: `cryptomus_merchant_id`, `cryptomus_payment_api_key`.
+- URL вебхука в ЛК Cryptomus: `https://panel.your-domain.com/webhook/cryptomus`.
+
+### Telegram Stars
+- Включите платежи в Stars через `@BotFather` (`/mybots` -> *Bot Settings* -> *Payments*).
+- Включите переключатель Stars в панели управления ботом.
+
+### CryptoBot & YooKassa
+- **CryptoBot**: укажите API-токен приложения из `@CryptoBot` -> *Crypto Pay*. URL вебхука: `https://panel.your-domain.com/cryptobot-webhook`.
+- **YooKassa**: укажите `yookassa_shop_id` и `yookassa_secret_key`. URL вебхука: `https://panel.your-domain.com/yookassa-webhook`.
+
+---
+
+## 🤖 AI-онбординг и атрибуция
+
+Платформа поддерживает интеграцию с нейросетями через шлюз **OpenRouter API** для интеллектуальной консультации новых пользователей:
+
+```json
+{
+  "openrouter_api_key": "sk-or-v1-...",
+  "openrouter_model": "meta-llama/llama-3.3-70b-instruct",
+  "support_bot_username": "neovpn_supportbot"
+}
+```
+
+- **Сегментация клиентов**: бот автоматически распознает маркетинговые диплинки (`?start=ref_yt`, `?start=ref_ds`, `?start=ref_rkn`) и генерирует приветствие под конкретную потребность (разблокировка YouTube 4K, снижение пинга в Discord, обход ТСПУ).
+- **Защита от задержек (Timeout Shield)**: лимит вызова AI жестко ограничен 2.5 секундами. При малейшей сетевой задержке пользователю мгновенно отдается оптимизированный статический шаблон.
+
+---
+
+## 🔒 Безопасность и эксплуатация
+
+### Запуск аудита и харденинга периметра
+Выполнить аудит периметра можно в один клик в веб-панели (**Безопасность -> Запустить харденинг**) либо вручную из консоли сервера:
 
 ```bash
-docker-compose down
+sudo bash ~/3xui-shopbot/src/scripts/server_security_harden.sh
 ```
 
-Запуск в фоне:
+### Управление процессами Docker
 
 ```bash
-docker-compose up -d
+cd ~/3xui-shopbot
+
+# Просмотр журналов в реальном времени
+docker compose logs -f 3xui-shopbot
+
+# Перезапуск стека
+docker compose restart
+
+# Остановка контейнеров
+docker compose down
+
+# Запуск в фоновом режиме
+docker compose up -d
 ```
 
-**Обновить бота до последней версии:**
-
-```bash
-curl -sSL https://raw.githubusercontent.com/neoandersen/3xui-shopbot/main/install.sh | sudo bash
-
-docker-compose down && docker-compose up
-```
+---
 
 ## 🙌 Баги и предложения
 
@@ -304,7 +248,5 @@ docker-compose down && docker-compose up
 
 ## 💎 Поддержать разработку
 
-**Bybit:** (UID:162321761)
+**Bybit:** (UID:162321761)  
 **Binance:** (ID:35909362)
-
-## Я ценю любой вклад в развитие проекта ❤️
