@@ -1767,23 +1767,29 @@ def create_gift_key(user_id: int, host_name: str, key_email: str, months: int, x
             )
             conn.commit()
             return cursor.lastrowid
-    except sqlite3.IntegrityОшибка as e:
+    except sqlite3.IntegrityError as e:
         logging.error(f"Не удалось создать подарочный ключ для пользователя {user_id}: дублирующийся email {key_email}: {e}")
         return None
     except sqlite3.Error as e:
         logging.error(f"Не удалось создать подарочный ключ для пользователя {user_id}: {e}")
         return None
 
-def get_setting(key: str) -> str | None:
+def get_setting(key: str, default: Any = None) -> Any:
+    """
+    Возвращает значение настройки по ключу. Если ключ отсутствует или равен None,
+    возвращает default.
+    """
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT value FROM bot_settings WHERE key = ?", (key,))
-            result = cursor.fetchone()
-            return result[0] if result else None
+            row = cursor.fetchone()
+            if row is not None and row[0] is not None:
+                return row[0]
+            return default
     except sqlite3.Error as e:
         logging.error(f"Не удалось получить настройку '{key}': {e}")
-        return None
+        return default
 
 def get_admin_ids() -> set[int]:
     """Возвращает множество ID администраторов из настроек.
