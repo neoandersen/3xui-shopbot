@@ -340,7 +340,7 @@ def initialize_db():
                 "enable_referrals": "true",
                 "referral_percentage": "10",
                 "referral_discount": "5",
-                "minimum_withdrawal": "100",
+                "minimum_withdrawal": "2.0",
                 "admin_telegram_id": None,
                 "admin_telegram_ids": None,
                 "yookassa_shop_id": None,
@@ -359,9 +359,9 @@ def initialize_db():
                 "support_bot_username": "neovpn_supportbot",
                 # Referral program advanced
                 "enable_fixed_referral_bonus": "false",
-                "fixed_referral_bonus_amount": "50",
+                "fixed_referral_bonus_amount": "1.00",
                 "referral_reward_type": "percent_purchase",  # percent_purchase | fixed_purchase | fixed_start_referrer
-                "referral_on_start_referrer_amount": "20",
+                "referral_on_start_referrer_amount": "0.50",
                 # Backups
                 "backup_interval_days": "1",
                 # Telegram Stars payments
@@ -390,6 +390,7 @@ def initialize_db():
                 "cryptomus_api_key": None,
                 # Base currency settings
                 "base_currency": "USD",
+                "max_keys": "50",
                 "stars_rate_usd": "0.02",
             }
             run_migration()
@@ -518,6 +519,21 @@ def initialize_db():
                 migrate_legacy_keys(conn)
             except Exception as e:
                 logging.warning(f"Ошибка вызова migrate_legacy_keys: {e}")
+
+            # v1.3.0: Миграция plans (price_currency) и представление tariffs
+            try:
+                cursor.execute("PRAGMA table_info(plans)")
+                plan_cols = {row[1] for row in cursor.fetchall()}
+                if 'price_currency' not in plan_cols:
+                    cursor.execute("ALTER TABLE plans ADD COLUMN price_currency TEXT DEFAULT 'USD'")
+                cursor.execute("""
+                    CREATE VIEW IF NOT EXISTS tariffs AS 
+                    SELECT plan_id, host_name, plan_name, months, price, COALESCE(price_currency, 'USD') AS price_currency 
+                    FROM plans
+                """)
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"Ошибка при миграции plans/tariffs: {e}")
             
             logging.info("База данных успешно инициализирована.")
     except sqlite3.Error as e:

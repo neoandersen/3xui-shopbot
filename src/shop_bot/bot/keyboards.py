@@ -710,7 +710,7 @@ def create_admin_promo_discount_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     # Первый шаг: выбрать тип скидки
     builder.button(text="Процент", callback_data="admin_promo_discount_type_percent")
-    builder.button(text="Фикс (RUB)", callback_data="admin_promo_discount_type_amount")
+    builder.button(text="Фикс ($)", callback_data="admin_promo_discount_type_amount")
     builder.button(text="❌ Отмена", callback_data="admin_cancel")
     builder.adjust(2, 1)
     return builder.as_markup()
@@ -722,7 +722,7 @@ def create_admin_promo_discount_percent_menu_keyboard() -> InlineKeyboardMarkup:
         builder.button(text=f"{p}%", callback_data=f"admin_promo_discount_percent_{p}")
     # Ручной ввод обоих типов и переключение меню
     builder.button(text="🖊 Ввести процент", callback_data="admin_promo_discount_manual_percent")
-    builder.button(text="🖊 Ввести фикс RUB", callback_data="admin_promo_discount_manual_amount")
+    builder.button(text="🖊 Ввести фикс USD ($)", callback_data="admin_promo_discount_manual_amount")
     builder.button(text="↔️ Фикс-меню", callback_data="admin_promo_discount_show_amount_menu")
     builder.button(text="❌ Отмена", callback_data="admin_cancel")
     builder.adjust(3, 3, 1, 1, 1)
@@ -730,14 +730,14 @@ def create_admin_promo_discount_percent_menu_keyboard() -> InlineKeyboardMarkup:
 
 def create_admin_promo_discount_amount_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    # Пресеты сумм в рублях
-    for a in (50, 100, 150, 200, 300, 500):
-        builder.button(text=f"{a} RUB", callback_data=f"admin_promo_discount_amount_{a}")
-    builder.button(text="🖊 Ввести фикс RUB", callback_data="admin_promo_discount_manual_amount")
+    # Пресеты сумм в USD
+    for a in (1, 2, 3, 5, 10, 15, 20):
+        builder.button(text=f"${a}", callback_data=f"admin_promo_discount_amount_{a}")
+    builder.button(text="🖊 Ввести фикс USD ($)", callback_data="admin_promo_discount_manual_amount")
     builder.button(text="🖊 Ввести процент", callback_data="admin_promo_discount_manual_percent")
     builder.button(text="↔️ Процент-меню", callback_data="admin_promo_discount_show_percent_menu")
     builder.button(text="❌ Отмена", callback_data="admin_cancel")
-    builder.adjust(3, 3, 1, 1, 1)
+    builder.adjust(4, 3, 1, 1, 1)
     return builder.as_markup()
 
 def create_admin_promo_limits_keyboard() -> InlineKeyboardMarkup:

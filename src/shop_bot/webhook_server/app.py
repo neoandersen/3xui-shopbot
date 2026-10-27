@@ -497,7 +497,7 @@ def create_webhook_app(bot_controller_instance):
                 bot = _bot_controller.get_bot_instance()
                 if bot:
                     sign = '+' if delta >= 0 else ''
-                    text = f"💳 Ваш баланс был изменён администратором: {sign}{delta:.2f} RUB\nТекущий баланс: {get_balance(user_id):.2f} RUB"
+                    text = f"💳 Ваш баланс был изменён администратором: {sign}${delta:.2f}\nТекущий баланс: ${get_balance(user_id):.2f}"
                     loop = current_app.config.get('EVENT_LOOP')
                     if loop and loop.is_running():
                         asyncio.run_coroutine_threadsafe(bot.send_message(chat_id=user_id, text=text), loop)

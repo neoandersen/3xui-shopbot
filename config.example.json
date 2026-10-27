@@ -1,0 +1,17 @@
+{
+  "telegram_bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+  "telegram_bot_username": "YOUR_BOT_USERNAME",
+  "admin_telegram_id": 123456789,
+  "admin_telegram_ids": [123456789],
+  "base_currency": "USD",
+  "max_keys": 50,
+  "default_currency_symbol": "$",
+  "stars_rate_usd": 0.02,
+  "minimum_withdrawal": 2.0,
+  "referral_percentage": 10,
+  "referral_discount": 5,
+  "trial_enabled": true,
+  "trial_duration_days": 3,
+  "panel_login": "admin",
+  "panel_password": "admin"
+}

@@ -46,6 +46,11 @@ from shop_bot.data_manager.database import (
     list_promo_codes,
     update_promo_code_status,
     get_promo_code,
+    create_plan,
+    update_plan,
+    delete_plan,
+    get_plan_by_id,
+    get_plans_for_host,
 )
 from shop_bot.data_manager import backup_manager
 from shop_bot.bot.handlers import show_main_menu
@@ -96,11 +101,11 @@ def get_admin_router() -> Router:
             "📊 <b>Панель Администратора</b>\n\n"
             "<b>За сегодня:</b>\n"
             f"👥 Новых пользователей: {today_new}\n"
-            f"💰 Доход: {today_income:.2f} RUB\n"
+            f"💰 Доход: ${today_income:.2f}\n"
             f"🔑 Выдано ключей: {today_keys}\n\n"
             "<b>За все время:</b>\n"
             f"👥 Всего пользователей: {total_users}\n"
-            f"💰 Общий доход: {total_income:.2f} RUB\n"
+            f"💰 Общий доход: ${total_income:.2f}\n"
             f"🔑 Всего ключей: {total_keys}\n\n"
             "<b>Состояние ключей:</b>\n"
             f"✅ Активных: {active_keys}"
@@ -292,7 +297,7 @@ def get_admin_router() -> Router:
                 f"  • Переходы: <b>{clicks}</b>\n"
                 f"  • Триалы: <b>{trials}</b> (CR: {cr_trial:.1f}%)\n"
                 f"  • Продажи: <b>{sales}</b> (CR: {cr_sale:.1f}%)\n"
-                f"  • Выручка: <b>{income:.2f} RUB</b>\n"
+                f"  • Выручка: <b>${income:.2f}</b>\n"
             )
 
         cr_total_trial = (total_trials / total_clicks * 100) if total_clicks > 0 else 0.0
@@ -302,7 +307,7 @@ def get_admin_router() -> Router:
             f"  • Переходов: <b>{total_clicks}</b>\n"
             f"  • Триалов: <b>{total_trials}</b> (CR: {cr_total_trial:.1f}%)\n"
             f"  • Продаж: <b>{total_sales}</b> (CR: {cr_total_sale:.1f}%)\n"
-            f"  • Выручка: <b>{total_income:.2f} RUB</b>"
+            f"  • Выручка: <b>${total_income:.2f}</b>"
         )
 
         builder = InlineKeyboardBuilder()
@@ -663,7 +668,7 @@ def get_admin_router() -> Router:
                 if p.get('discount_percent'):
                     disc = f"{float(p.get('discount_percent')):.0f}%"
                 elif p.get('discount_amount'):
-                    disc = f"{float(p.get('discount_amount')):.2f} RUB"
+                    disc = f"${float(p.get('discount_amount')):.2f}"
                 disc = disc or '—'
                 limit_str = f"{used_total}/{limit_total}" if limit_total else f"{used_total}"
                 lines.append(f"• <b>{code}</b> — {'✅' if active else '❌'} | скидка: {disc} | исх./лим.: {limit_str} | {vf} → {vu}")
@@ -778,14 +783,14 @@ def get_admin_router() -> Router:
             return
         if data == "admin_promo_discount_type_amount":
             await callback.message.edit_text(
-                "Выберите фиксированную сумму скидки (RUB) или введите вручную:",
+                "Выберите фиксированную сумму скидки в USD ($) или введите вручную:",
                 reply_markup=keyboards.create_admin_promo_discount_amount_menu_keyboard()
             )
             return
         # Переключатели меню
         if data == "admin_promo_discount_show_amount_menu":
             await callback.message.edit_text(
-                "Выберите фиксированную сумму скидки (RUB) или введите вручную:",
+                "Выберите фиксированную сумму скидки в USD ($) или введите вручную:",
                 reply_markup=keyboards.create_admin_promo_discount_amount_menu_keyboard()
             )
             return
@@ -806,7 +811,7 @@ def get_admin_router() -> Router:
         if data == "admin_promo_discount_manual_amount":
             await state.update_data(manual_discount_mode="amount")
             await callback.message.edit_text(
-                "Введите фиксированную сумму скидки в RUB (например, 100). Можно также amount:100",
+                "Введите фиксированную сумму скидки в USD ($) (например, 2). Можно также amount:2",
                 reply_markup=keyboards.create_admin_cancel_keyboard()
             )
             return
@@ -820,7 +825,7 @@ def get_admin_router() -> Router:
             try:
                 amt = float(data.rsplit("_", 1)[-1])
             except Exception:
-                amt = 50.0
+                amt = 2.0
         # Сохраняем и идём дальше
         await state.update_data(discount_percent=perc, discount_amount=amt, manual_discount_mode=None,
                                 usage_limit_total=None, usage_limit_per_user=None, limits_manual_input=None,
@@ -1143,7 +1148,7 @@ def get_admin_router() -> Router:
         if data.get('discount_percent'):
             disc_txt = f"{float(data['discount_percent']):.0f}%"
         elif data.get('discount_amount'):
-            disc_txt = f"{float(data['discount_amount']):.2f} RUB"
+            disc_txt = f"${float(data['discount_amount']):.2f}"
         else:
             disc_txt = '—'
         lim_total = data.get('usage_limit_total')
@@ -1232,8 +1237,8 @@ def get_admin_router() -> Router:
         text = (
             f"👤 <b>Пользователь {user_id}</b>\n\n"
             f"Имя пользователя: {user_tag}\n"
-            f"Всего потратил: {float(total_spent):.2f} RUB\n"
-            f"Баланс: {float(balance):.2f} RUB\n"
+            f"Всего потратил: ${float(total_spent):.2f}\n"
+            f"Баланс: ${float(balance):.2f}\n"
             f"Забанен: {'да' if is_banned else 'нет'}\n"
             f"Приглашён: {referred_by if referred_by else '—'}\n"
             f"Ключей: {keys_count}"
@@ -1308,8 +1313,8 @@ def get_admin_router() -> Router:
         text = (
             f"👤 <b>Пользователь {user_id}</b>\n\n"
             f"Имя пользователя: {user_tag}\n"
-            f"Всего потратил: {float(total_spent):.2f} RUB\n"
-            f"Баланс: {float(balance):.2f} RUB\n"
+            f"Всего потратил: ${float(total_spent):.2f}\n"
+            f"Баланс: ${float(balance):.2f}\n"
             f"Забанен: да\n"
             f"Приглашён: {referred_by if referred_by else '—'}\n"
             f"Ключей: {keys_count}"
@@ -1417,8 +1422,8 @@ def get_admin_router() -> Router:
         text = (
             f"👤 <b>Пользователь {user_id}</b>\n\n"
             f"Имя пользователя: {user_tag}\n"
-            f"Всего потратил: {float(total_spent):.2f} RUB\n"
-            f"Баланс: {float(balance):.2f} RUB\n"
+            f"Всего потратил: ${float(total_spent):.2f}\n"
+            f"Баланс: ${float(balance):.2f}\n"
             f"Забанен: нет\n"
             f"Приглашён: {referred_by if referred_by else '—'}\n"
             f"Ключей: {keys_count}"
@@ -1478,12 +1483,12 @@ def get_admin_router() -> Router:
             uname = r.get('username') or '—'
             rdate = r.get('registration_date') or '—'
             spent = float(r.get('total_spent') or 0)
-            lines.append(f"• @{uname} (ID: {rid}) — рег: {rdate}, потратил: {spent:.2f} RUB")
+            lines.append(f"• @{uname} (ID: {rid}) — рег: {rdate}, потратил: ${spent:.2f}")
         more_suffix = "\n… и ещё {}".format(ref_count - max_items) if ref_count > max_items else ""
         text = (
             f"🤝 <b>Рефералы пользователя {user_id}</b>\n\n"
             f"Всего приглашено: {ref_count}\n"
-            f"Заработано по рефералке (всего): {total_ref_earned:.2f} RUB\n\n"
+            f"Заработано по рефералке (всего): ${total_ref_earned:.2f}\n\n"
             + ("\n".join(lines) if lines else "Пока нет рефералов")
             + more_suffix
         )
@@ -2218,7 +2223,7 @@ def get_admin_router() -> Router:
         await state.update_data(target_user_id=user_id)
         await state.set_state(AdminMainRefill.waiting_for_amount)
         await callback.message.edit_text(
-            f"Пользователь {user_id}. Введите сумму начисления (в рублях):",
+            f"Пользователь {user_id}. Введите сумму начисления в USD ($):",
             reply_markup=keyboards.create_admin_cancel_keyboard()
         )
 
@@ -2254,7 +2259,7 @@ def get_admin_router() -> Router:
         await state.update_data(target_user_id=user_id)
         await state.set_state(AdminMainRefill.waiting_for_amount)
         await callback.message.edit_text(
-            f"Пользователь {user_id}. Введите сумму начисления (в рублях):",
+            f"Пользователь {user_id}. Введите сумму начисления в USD ($):",
             reply_markup=keyboards.create_admin_cancel_keyboard()
         )
 
@@ -2267,7 +2272,7 @@ def get_admin_router() -> Router:
         try:
             amount = float(message.text.strip().replace(',', '.'))
         except Exception:
-            await message.answer("❌ Введите число — сумму в рублях")
+            await message.answer("❌ Введите число — сумму в USD")
             return
         if amount <= 0:
             await message.answer("❌ Сумма должна быть положительной")
@@ -2275,9 +2280,9 @@ def get_admin_router() -> Router:
         try:
             ok = add_to_balance(user_id, amount)
             if ok:
-                await message.answer(f"✅ Начислено {amount:.2f} RUB на баланс пользователю {user_id}")
+                await message.answer(f"✅ Начислено ${amount:.2f} на баланс пользователю {user_id}")
                 try:
-                    await message.bot.send_message(user_id, f"💰 Вам начислено {amount:.2f} RUB на баланс администратором.")
+                    await message.bot.send_message(user_id, f"💰 Вам начислено ${amount:.2f} на баланс администратором.")
                 except Exception:
                     pass
             else:
@@ -2369,7 +2374,7 @@ def get_admin_router() -> Router:
         await state.update_data(target_user_id=user_id)
         await state.set_state(AdminMainDeduct.waiting_for_amount)
         await callback.message.edit_text(
-            f"Пользователь {user_id}. Введите сумму списания (в рублях):",
+            f"Пользователь {user_id}. Введите сумму списания в USD ($):",
             reply_markup=keyboards.create_admin_cancel_keyboard()
         )
 
@@ -2405,7 +2410,7 @@ def get_admin_router() -> Router:
         await state.update_data(target_user_id=user_id)
         await state.set_state(AdminMainDeduct.waiting_for_amount)
         await callback.message.edit_text(
-            f"Пользователь {user_id}. Введите сумму списания (в рублях):",
+            f"Пользователь {user_id}. Введите сумму списания в USD ($):",
             reply_markup=keyboards.create_admin_cancel_keyboard()
         )
 
@@ -2418,7 +2423,7 @@ def get_admin_router() -> Router:
         try:
             amount = float(message.text.strip().replace(',', '.'))
         except Exception:
-            await message.answer("❌ Введите число — сумму в рублях")
+            await message.answer("❌ Введите число — сумму в USD")
             return
         if amount <= 0:
             await message.answer("❌ Сумма должна быть положительной")
@@ -2426,11 +2431,11 @@ def get_admin_router() -> Router:
         try:
             ok = deduct_from_balance(user_id, amount)
             if ok:
-                await message.answer(f"✅ Списано {amount:.2f} RUB с баланса пользователя {user_id}")
+                await message.answer(f"✅ Списано ${amount:.2f} с баланса пользователя {user_id}")
                 try:
                     await message.bot.send_message(
                         user_id,
-                        f"➖ С вашего баланса списано {amount:.2f} RUB администратором.\nЕсли это ошибка — напишите в поддержку.",
+                        f"➖ С вашего баланса списано ${amount:.2f} администратором.\nЕсли это ошибка — напишите в поддержку.",
                         reply_markup=keyboards.create_support_keyboard()
                     )
                 except Exception:
@@ -2789,31 +2794,103 @@ def get_admin_router() -> Router:
             user_id = int(message.text.split("_")[-1])
             user = get_user(user_id)
             balance = user.get('referral_balance', 0)
-            if balance < 100:
-                await message.answer("Баланс пользователя менее 100 руб.")
+            min_with = float(get_setting("minimum_withdrawal") or 2.0)
+            if balance < min_with:
+                await message.answer(f"Баланс пользователя менее ${min_with:.2f}.")
                 return
             set_referral_balance(user_id, 0)
             set_referral_balance_all(user_id, 0)
-            await message.answer(f"✅ Выплата {balance:.2f} RUB пользователю {user_id} подтверждена.")
+            await message.answer(f"✅ Выплата ${balance:.2f} пользователю {user_id} подтверждена.")
             await message.bot.send_message(
                 user_id,
-                f"✅ Ваша заявка на вывод {balance:.2f} RUB одобрена. Деньги будут переведены в ближайшее время."
+                f"✅ Ваша заявка на вывод ${balance:.2f} одобрена. Деньги будут переведены в ближайшее время."
             )
         except Exception as e:
             await message.answer(f"Ошибка: {e}")
 
-    @admin_router.message(Command(commands=["decline_withdraw"]))
-    async def decline_withdraw_handler(message: types.Message):
+    # --- Управление тарифами (Блок 3.1) ---
+    class AdminAddPlan(StatesGroup):
+        waiting_for_host = State()
+        waiting_for_name = State()
+        waiting_for_months = State()
+        waiting_for_price = State()
+
+    class AdminEditPlanPrice(StatesGroup):
+        waiting_for_price = State()
+
+    @admin_router.callback_query(F.data.startswith("admin_view_plan_"))
+    async def admin_view_plan_handler(callback: types.CallbackQuery):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        plan_id = int(callback.data.split("_")[-1])
+        plan = get_plan_by_id(plan_id)
+        if not plan:
+            await callback.message.answer("❌ Тариф не найден.")
+            return
+        text = (
+            f"📦 <b>Тариф:</b> {plan.get('plan_name')}\n"
+            f"🌍 <b>Хост:</b> {plan.get('host_name')}\n"
+            f"📅 <b>Срок:</b> {plan.get('months')} мес.\n"
+            f"💰 <b>Цена:</b> ${float(plan.get('price', 0)):.2f}"
+        )
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✏️ Изменить цену", callback_data=f"admin_edit_plan_price_{plan_id}")
+        builder.button(text="🗑 Удалить тариф", callback_data=f"admin_delete_plan_{plan_id}")
+        builder.button(text="⬅️ В админ-меню", callback_data="admin_menu")
+        builder.adjust(1)
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+    @admin_router.callback_query(F.data.startswith("admin_edit_plan_price_"))
+    async def admin_edit_plan_price_start(callback: types.CallbackQuery, state: FSMContext):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        plan_id = int(callback.data.split("_")[-1])
+        await state.update_data(edit_plan_id=plan_id)
+        await state.set_state(AdminEditPlanPrice.waiting_for_price)
+        await callback.message.edit_text(
+            "Введите стоимость тарифа в USD ($) (например, 2.50):",
+            reply_markup=keyboards.create_admin_cancel_keyboard()
+        )
+
+    @admin_router.message(AdminEditPlanPrice.waiting_for_price)
+    async def admin_edit_plan_price_finish(message: types.Message, state: FSMContext):
         if not is_admin(message.from_user.id):
             return
+        data = await state.get_data()
+        plan_id = data.get("edit_plan_id")
+        plan = get_plan_by_id(plan_id)
+        if not plan:
+            await message.answer("❌ Тариф не найден.")
+            await state.clear()
+            return
+        raw = message.text.strip().replace(',', '.')
         try:
-            user_id = int(message.text.split("_")[-1])
-            await message.answer(f"❌ Заявка пользователя {user_id} отклонена.")
-            await message.bot.send_message(
-                user_id,
-                "❌ Ваша заявка на вывод отклонена. Проверьте корректность реквизитов и попробуйте снова."
-            )
-        except Exception as e:
-            await message.answer(f"Ошибка: {e}")
+            new_price = float(raw)
+            if new_price <= 0:
+                raise ValueError
+        except Exception:
+            await message.answer("❌ Введите корректную стоимость тарифа в USD ($) (например, 2.50):")
+            return
+        ok = update_plan(plan_id, plan['plan_name'], int(plan['months']), new_price)
+        await state.clear()
+        if ok:
+            await message.answer(f"✅ Стоимость тарифа '{plan['plan_name']}' обновлена: ${new_price:.2f}")
+        else:
+            await message.answer("❌ Не удалось обновить цену тарифа.")
+
+    @admin_router.callback_query(F.data.startswith("admin_delete_plan_"))
+    async def admin_delete_plan_handler(callback: types.CallbackQuery):
+        if not is_admin(callback.from_user.id):
+            await callback.answer("У вас нет прав.", show_alert=True)
+            return
+        await callback.answer()
+        plan_id = int(callback.data.split("_")[-1])
+        delete_plan(plan_id)
+        await callback.message.edit_text("✅ Тариф успешно удалён.", reply_markup=keyboards.create_back_to_menu_keyboard())
 
     return admin_router
+

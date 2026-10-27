@@ -281,7 +281,7 @@ def get_user_router() -> Router:
                         text=(
                             "🎁 Начисление за приглашение!\n"
                             f"Новый пользователь: {safe_invited_name} (ID: {user_id})\n"
-                            f"Бонус: {float(start_bonus):.2f} RUB"
+                            f"Бонус: ${float(start_bonus):.2f}"
                         )
                     )
                 except Exception:
@@ -595,7 +595,7 @@ def get_user_router() -> Router:
     async def topup_start_handler(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         await callback.message.edit_text(
-            "Введите сумму пополнения в рублях (например, 300):\nМинимум: 10 RUB, максимум: 100000 RUB",
+            "Введите сумму пополнения в USD ($):\nМинимум: 1.00 USD, максимум: 1000.00 USD",
         )
         await state.set_state(TopUpProcess.waiting_for_amount)
 
@@ -605,21 +605,21 @@ def get_user_router() -> Router:
         try:
             amount = Decimal(text)
         except Exception:
-            await message.answer("❌ Введите корректную сумму, например: 300")
+            await message.answer("❌ Введите корректную сумму, например: 5.00")
             return
         if amount <= 0:
             await message.answer("❌ Сумма должна быть положительной")
             return
-        if amount < Decimal("10"):
-            await message.answer("❌ Минимальная сумма пополнения: 10 RUB")
+        if amount < Decimal("1.00"):
+            await message.answer("❌ Минимальная сумма пополнения: 1.00 USD")
             return
-        if amount > Decimal("100000"):
-            await message.answer("❌ Максимальная сумма пополнения: 100000 RUB")
+        if amount > Decimal("1000.00"):
+            await message.answer("❌ Максимальная сумма пополнения: 1000.00 USD")
             return
         final_amount = amount.quantize(Decimal("0.01"))
         await state.update_data(topup_amount=float(final_amount))
         await message.answer(
-            f"К пополнению: {final_amount:.2f} RUB\nВыберите способ оплаты:",
+            f"К пополнению: ${final_amount:.2f} USD\nВыберите способ оплаты:",
             reply_markup=keyboards.create_topup_payment_method_keyboard(PAYMENT_METHODS)
         )
         await state.set_state(TopUpProcess.waiting_for_topup_method)
@@ -628,14 +628,15 @@ def get_user_router() -> Router:
     async def topup_pay_yookassa(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Создаю ссылку на оплату...")
         data = await state.get_data()
-        amount = Decimal(str(data.get('topup_amount', 0)))
-        if amount <= 0:
+        amount_usd = Decimal(str(data.get('topup_amount', 0)))
+        if amount_usd <= 0:
             await callback.message.edit_text("❌ Некорректная сумма пополнения. Повторите ввод.")
             await state.clear()
             return
         user_id = callback.from_user.id
-        price_str_for_api = f"{amount:.2f}"
-        price_float_for_metadata = float(amount)
+        amount_rub = float(currency_service.convert_from_usd(float(amount_usd), "RUB"))
+        price_str_for_api = f"{amount_rub:.2f}"
+        price_float_for_metadata = float(amount_usd)
 
         try:
             # Сформируем чек, если указан email для чеков
@@ -658,7 +659,7 @@ def get_user_router() -> Router:
                 "amount": {"value": price_str_for_api, "currency": "RUB"},
                 "confirmation": {"type": "redirect", "return_url": f"https://t.me/{TELEGRAM_BOT_USERNAME}"},
                 "capture": True,
-                "description": f"Пополнение баланса на {price_str_for_api} RUB",
+                "description": f"Пополнение баланса на ${amount_usd:.2f}",
                 "metadata": {
                     "user_id": str(user_id),
                     "price": f"{price_float_for_metadata:.2f}",
@@ -683,8 +684,8 @@ def get_user_router() -> Router:
     async def topup_pay_yoomoney(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Готовлю ЮMoney…")
         data = await state.get_data()
-        amount = Decimal(str(data.get('topup_amount', 0)))
-        if amount <= 0:
+        amount_usd = Decimal(str(data.get('topup_amount', 0)))
+        if amount_usd <= 0:
             await callback.message.edit_text("❌ Некорректная сумма пополнения. Повторите ввод.")
             await state.clear()
             return
@@ -695,15 +696,16 @@ def get_user_router() -> Router:
             return
         user_id = callback.from_user.id
         payment_id = str(uuid.uuid4())
+        amount_rub = float(currency_service.convert_from_usd(float(amount_usd), "RUB"))
         metadata = {
             "payment_id": payment_id,
             "user_id": user_id,
-            "price": float(amount),
+            "price": float(amount_usd),
             "action": "top_up",
             "payment_method": "YooMoney",
         }
         try:
-            create_pending_transaction(payment_id, user_id, float(amount), metadata)
+            create_pending_transaction(payment_id, user_id, float(amount_rub), metadata, amount_usd=float(amount_usd), currency_name="RUB", amount_currency=amount_rub)
         except Exception as e:
             logger.warning(f"YooMoney пополнение: не удалось создать ожидающую транзакцию: {e}")
         try:
@@ -712,10 +714,10 @@ def get_user_router() -> Router:
             success_url = None
         pay_url = _build_yoomoney_quickpay_url(
             wallet=ym_wallet,
-            amount=float(amount),
+            amount=float(amount_rub),
             label=payment_id,
             success_url=success_url,
-            targets=f"Пополнение на {amount:.2f} RUB",
+            targets=f"Пополнение на ${amount_usd:.2f}",
         )
         await state.clear()
         await callback.message.edit_text(
@@ -763,28 +765,28 @@ def get_user_router() -> Router:
     async def topup_pay_stars(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
         await callback.answer("Готовлю счёт в Stars…")
         data = await state.get_data()
-        amount_rub = Decimal(str(data.get('topup_amount', 0)))
-        if amount_rub <= 0:
+        amount_usd = Decimal(str(data.get('topup_amount', 0)))
+        if amount_usd <= 0:
             await callback.message.edit_text("❌ Некорректная сумма пополнения. Повторите ввод.")
             await state.clear()
             return
-        stars_count = _calc_stars_amount(amount_rub.quantize(Decimal("0.01")))
+        stars_count = _calc_stars_amount(amount_usd.quantize(Decimal("0.01")))
         # Для Telegram Stars payload должен быть коротким (до 128 байт). Используем UUID
         # и сохраняем полные метаданные во временную pending‑транзакцию.
         payment_id = str(uuid.uuid4())
         metadata = {
             "user_id": callback.from_user.id,
-            "price": float(amount_rub),
+            "price": float(amount_usd),
             "action": "top_up",
             "payment_method": "Stars",
         }
         try:
-            create_pending_transaction(payment_id, callback.from_user.id, float(amount_rub), metadata)
+            create_pending_transaction(payment_id, callback.from_user.id, float(amount_usd), metadata, amount_usd=float(amount_usd), currency_name="XTR", amount_currency=float(stars_count))
         except Exception as e:
             logger.warning(f"Stars пополнение: не удалось создать ожидающую транзакцию: {e}")
         payload = payment_id
         title = (get_setting("stars_title") or "Пополнение баланса")
-        description = (get_setting("stars_description") or f"Пополнение на {amount_rub} RUB")
+        description = (get_setting("stars_description") or f"Пополнение на ${amount_usd:.2f}")
         try:
             await bot.send_invoice(
                 chat_id=callback.message.chat.id,
@@ -823,7 +825,7 @@ def get_user_router() -> Router:
             if callback.data == "topup_pay_cryptobot":
                 pay_url = await _create_cryptobot_invoice(
                     user_id=user_id,
-                    price_rub=float(amount),
+                    price_usd=float(amount),
                     months=0,
                     host_name="",
                     state_data=state_data,
@@ -863,20 +865,20 @@ def get_user_router() -> Router:
 
         order_id = str(uuid.uuid4())
         user_currency = get_user_preferred_currency(user_id)
-        amount_usd = float(currency_service.convert_to_usd(amount, "RUB"))
-        aaio_currency = user_currency if user_currency in ["RUB", "UAH", "EUR", "USD"] else "RUB"
+        amount_usd = float(amount)
+        aaio_currency = user_currency if user_currency in ["RUB", "UAH", "EUR", "USD"] else "USD"
 
         metadata = {
             "payment_id": order_id,
             "user_id": user_id,
-            "price": amount,
+            "price": amount_usd,
             "action": "top_up",
             "payment_method": "Aaio",
         }
         create_pending_transaction(
             payment_id=order_id,
             user_id=user_id,
-            amount_rub=amount,
+            amount_rub=float(currency_service.convert_from_usd(amount_usd, "RUB")),
             metadata=metadata,
             provider="aaio",
             provider_payment_id=order_id,
@@ -916,18 +918,18 @@ def get_user_router() -> Router:
             return
 
         order_id = str(uuid.uuid4())
-        amount_usd = float(currency_service.convert_to_usd(amount, "RUB"))
+        amount_usd = float(amount)
         metadata = {
             "payment_id": order_id,
             "user_id": user_id,
-            "price": amount,
+            "price": amount_usd,
             "action": "top_up",
             "payment_method": "Cryptomus",
         }
         create_pending_transaction(
             payment_id=order_id,
             user_id=user_id,
-            amount_rub=amount,
+            amount_rub=float(currency_service.convert_from_usd(amount_usd, "RUB")),
             metadata=metadata,
             provider="cryptomus",
             provider_payment_id=order_id,
@@ -1036,7 +1038,7 @@ def get_user_router() -> Router:
             "🤝 <b>Реферальная программа</b>\n\n"
             f"<b>Ваша реферальная ссылка:</b>\n<code>{referral_link}</code>\n\n"
             f"<b>Приглашено пользователей:</b> {referral_count}\n"
-            f"<b>Заработано по рефералке:</b> {total_ref_earned:.2f} RUB"
+            f"<b>Заработано по рефералке:</b> ${total_ref_earned:.2f}"
         )
 
         builder = InlineKeyboardBuilder()
@@ -2084,8 +2086,8 @@ def get_user_router() -> Router:
     async def qty_plus_handler(callback: types.CallbackQuery, state: FSMContext):
         data = await state.get_data()
         qty = int(data.get('quantity', 1))
-        if qty >= 20:
-            await callback.answer("Максимальное количество — 20 шт.", show_alert=False)
+        if qty >= 50:
+            await callback.answer("Максимальное количество — 50 шт.", show_alert=False)
             return
         qty += 1
         await state.update_data(quantity=qty)
@@ -2413,8 +2415,10 @@ def get_user_router() -> Router:
         user_id = callback.from_user.id
 
         try:
-            price_str_for_api = f"{final_price_decimal:.2f}"
-            price_float_for_metadata = float(final_price_decimal)
+            final_price_usd = float(final_price_decimal)
+            final_price_rub = float(currency_service.convert_from_usd(final_price_usd, "RUB"))
+            price_str_for_api = f"{final_price_rub:.2f}"
+            price_float_for_metadata = final_price_usd
 
             receipt = None
             if customer_email and is_valid_email(customer_email):
@@ -2433,7 +2437,7 @@ def get_user_router() -> Router:
                 "amount": {"value": price_str_for_api, "currency": "RUB"},
                 "confirmation": {"type": "redirect", "return_url": f"https://t.me/{TELEGRAM_BOT_USERNAME}"},
                 "capture": True,
-                "description": f"Подписка на {months} мес.",
+                "description": f"Подписка на {months} мес. (${final_price_usd:.2f})",
                 "metadata": {
                     "user_id": str(user_id), "months": str(months), "price": f"{price_float_for_metadata:.2f}", 
                     "action": str(action) if action is not None else "",
@@ -2494,7 +2498,8 @@ def get_user_router() -> Router:
         if final_price_decimal < Decimal('0'):
             final_price_decimal = Decimal('0.00')
 
-        final_price_float = float(final_price_decimal)
+        final_price_usd = float(final_price_decimal)
+        amount_rub = float(currency_service.convert_from_usd(final_price_usd, "RUB"))
 
         ym_wallet = (get_setting("yoomoney_wallet") or "").strip()
         if not ym_wallet:
@@ -2509,7 +2514,7 @@ def get_user_router() -> Router:
             "payment_id": payment_id,
             "user_id": user_id,
             "months": months,
-            "price": final_price_float,
+            "price": final_price_usd,
             "action": data.get('action'),
             "key_id": data.get('key_id'),
             "host_name": data.get('host_name'),
@@ -2522,7 +2527,7 @@ def get_user_router() -> Router:
         }
         # Сохраняем pending транзакцию в БД
         try:
-            create_pending_transaction(payment_id, user_id, final_price_float, metadata)
+            create_pending_transaction(payment_id, user_id, amount_rub, metadata, amount_usd=final_price_usd, currency_name="RUB", amount_currency=amount_rub)
         except Exception as e:
             logger.warning(f"YooMoney: не удалось создать ожидающую транзакцию: {e}")
 
@@ -2531,10 +2536,10 @@ def get_user_router() -> Router:
             success_url = f"https://t.me/{TELEGRAM_BOT_USERNAME}" if TELEGRAM_BOT_USERNAME else None
         except Exception:
             success_url = None
-        targets = f"Оплата {months} мес."
+        targets = f"Оплата {months} мес. (${final_price_usd:.2f})"
         pay_url = _build_yoomoney_quickpay_url(
             wallet=ym_wallet,
-            amount=final_price_float,
+            amount=amount_rub,
             label=payment_id,
             success_url=success_url,
             targets=targets,
@@ -2652,11 +2657,11 @@ def get_user_router() -> Router:
                 price_rub_decimal = base_price - discount_amount
         months = plan['months']
 
-        final_price_float = float(price_rub_decimal)
+        final_price_float = float(data.get('final_price', plan['price']))
 
         pay_url = await _create_cryptobot_invoice(
             user_id=callback.from_user.id,
-            price_rub=final_price_float,
+            price_usd=final_price_float,
             months=plan['months'],
             host_name=data.get('host_name'),
             state_data=data,
@@ -2686,17 +2691,14 @@ def get_user_router() -> Router:
 
         await callback.answer("Создаю ссылку и QR-код для TON Connect...")
             
-        price_rub = Decimal(str(data.get('final_price', plan['price'])))
+        price_usd = Decimal(str(data.get('final_price', plan['price'])))
 
-        usdt_rub_rate = await get_usdt_rub_rate()
         ton_usdt_rate = await get_ton_usdt_rate()
+        if not ton_usdt_rate or ton_usdt_rate <= 0:
+            ton_fallback = currency_service.get_rate("USD", "TON") or 0.19
+            ton_usdt_rate = Decimal(str(round(1.0 / ton_fallback, 4))) if ton_fallback else Decimal("5.2")
 
-        if not usdt_rub_rate or not ton_usdt_rate:
-            await callback.message.edit_text("❌ Не удалось получить курс TON. Попробуйте позже.")
-            await state.clear()
-            return
-
-        price_ton = (price_rub / usdt_rub_rate / ton_usdt_rate).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+        price_ton = (price_usd / ton_usdt_rate).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
         amount_nanoton = int(price_ton * 1_000_000_000)
         
         payment_id = str(uuid.uuid4())
@@ -3040,7 +3042,7 @@ def get_user_router() -> Router:
                 f"  • Переходы: <b>{clicks}</b>\n"
                 f"  • Триалы: <b>{trials}</b> (CR: {cr_trial:.1f}%)\n"
                 f"  • Продажи: <b>{sales}</b> (CR: {cr_sale:.1f}%)\n"
-                f"  • Выручка: <b>{income:.2f} RUB</b>\n"
+                f"  • Выручка: <b>${income:.2f}</b>\n"
             )
 
         cr_total_trial = (total_trials / total_clicks * 100) if total_clicks > 0 else 0.0
@@ -3050,7 +3052,7 @@ def get_user_router() -> Router:
             f"  • Переходов: <b>{total_clicks}</b>\n"
             f"  • Триалов: <b>{total_trials}</b> (CR: {cr_total_trial:.1f}%)\n"
             f"  • Продаж: <b>{total_sales}</b> (CR: {cr_total_sale:.1f}%)\n"
-            f"  • Выручка: <b>{total_income:.2f} RUB</b>"
+            f"  • Выручка: <b>${total_income:.2f}</b>"
         )
 
         await message.answer("\n".join(lines), parse_mode="HTML")
@@ -3225,14 +3227,14 @@ async def _create_heleket_payment_request(
 
 async def _create_cryptobot_invoice(
     user_id: int,
-    price_rub: float,
+    price_usd: float,
     months: int,
     host_name: str,
     state_data: dict,
 ) -> Optional[str]:
     """Создать счёт в Telegram Crypto Pay и вернуть ссылку на оплату.
 
-    - Конвертирует RUB в USDT по рыночному курсу.
+    - Базовая валюта USD: 1 USDT = 1 USD.
     - Формирует payload в формате, ожидаемом обработчиком вебхука `/cryptobot-webhook`:
       `user_id:months:price:action:key_id:host_name:plan_id:customer_email:payment_method`.
     """
@@ -3242,18 +3244,13 @@ async def _create_cryptobot_invoice(
             logger.error("CryptoBot: не задан cryptobot_token")
             return None
 
-        rate = await get_usdt_rub_rate()
-        if not rate or rate <= 0:
-            logger.error("CryptoBot: не удалось получить курс USDT/RUB")
-            return None
-
-        amount_usdt = (Decimal(str(price_rub)) / rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        amount_usdt = Decimal(str(price_usd)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
         # Собираем payload для вебхука
         payload_parts = [
             str(user_id),
             str(months),
-            str(float(price_rub)),
+            str(float(price_usd)),
             str(state_data.get("action")),
             str(state_data.get("key_id")),
             str(host_name or ""),
@@ -3269,7 +3266,7 @@ async def _create_cryptobot_invoice(
         invoice = await cp.create_invoice(
             asset="USDT",
             amount=float(amount_usdt),
-            description="VPN оплата",
+            description=f"VPN подписка (${price_usd:.2f})",
             payload=payload,
         )
 
@@ -3455,7 +3452,7 @@ async def notify_admin_of_purchase(bot: Bot, metadata: dict):
             f"🗺️ Хост: {host_name}\n"
             f"📦 Тариф: {plan_name} ({months} мес.)\n"
             f"💳 Метод: {payment_method_display}\n"
-            f"💰 Сумма: {float(price):.2f} RUB\n"
+            f"💰 Сумма: ${float(price):.2f}\n"
             f"⚙️ Действие: {'Новый ключ' if action == 'new' else 'Продление'}"
         )
         await bot.send_message(admin_id, text)
@@ -3528,8 +3525,8 @@ async def process_successful_payment(bot: Bot, metadata: dict):
                     chat_id=user_id,
                     text=(
                         f"✅ Оплата получена!\n"
-                        f"💼 Баланс пополнен на {float(price):.2f} RUB.\n"
-                        f"Текущий баланс: {current_balance:.2f} RUB."
+                        f"💼 Баланс пополнен на ${float(price):.2f}.\n"
+                        f"Текущий баланс: ${current_balance:.2f}."
                     ),
                     reply_markup=keyboards.create_profile_keyboard()
                 )
@@ -3550,7 +3547,7 @@ async def process_successful_payment(bot: Bot, metadata: dict):
             for a in admins:
                 admin_id = a.get('telegram_id')
                 if admin_id:
-                    await bot.send_message(admin_id, f"📥 Пополнение: пользователь {user_id}, сумма {float(price):.2f} RUB")
+                    await bot.send_message(admin_id, f"📥 Пополнение: пользователь {user_id}, сумма ${float(price):.2f}")
         except Exception:
             pass
         return
@@ -3722,7 +3719,7 @@ async def process_successful_payment(bot: Bot, metadata: dict):
                             text=(
                                 "💰 Вам начислено реферальное вознаграждение!\n"
                                 f"Пользователь: {referrer_username} (ID: {user_id})\n"
-                                f"Сумма: {float(reward):.2f} RUB"
+                                f"Сумма: ${float(reward):.2f}"
                             )
                         )
                     except Exception as e:

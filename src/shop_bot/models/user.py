@@ -29,3 +29,4 @@ class User(Base):
     trial_granted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     converted_to_paid: Mapped[bool] = mapped_column(Boolean, default=False)
     last_start_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    preferred_currency: Mapped[str] = mapped_column(String(5), default="USD")
