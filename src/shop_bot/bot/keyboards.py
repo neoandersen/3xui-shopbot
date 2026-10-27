@@ -669,7 +669,8 @@ def create_payment_method_keyboard(
     main_balance: float | None = None,
     price: float | None = None,
     has_promo_applied: bool | None = None,
-    currency: str = "USD"
+    currency: str = "USD",
+    order_id: str | None = None
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     from shop_bot.services import currency_service
@@ -696,10 +697,12 @@ def create_payment_method_keyboard(
         builder.button(text="💳 Карты (UAH/RUB/KZT, World) / СБП — Aaio", callback_data="pay_aaio")
     if payment_methods and payment_methods.get("cryptomus"):
         builder.button(text="🌐 Мультивалютная крипта (USDT, BTC...) — Cryptomus", callback_data="pay_cryptomus")
-    if payment_methods and payment_methods.get("payok"):
-        builder.button(text="💳 Банковская карта / СБП (PayOK)", callback_data="pay_payok")
     if payment_methods and payment_methods.get("lavatop"):
-        builder.button(text="⚡ Карты и СБП (Lava.top)", callback_data="pay_lavatop")
+        cb_lavatop = f"pay:lavatop:{order_id}" if order_id else "pay_lavatop"
+        builder.button(text="⚡ Карты РФ / СБП (Lava.top)", callback_data=cb_lavatop)
+    if payment_methods and payment_methods.get("platega"):
+        cb_platega = f"pay:platega:{order_id}" if order_id else "pay_platega"
+        builder.button(text="💳 Банковская карта / СБП (Platega)", callback_data=cb_platega)
     if payment_methods and payment_methods.get("yookassa"):
         if get_setting("sbp_enabled"):
             builder.button(text="🏦 СБП / Банковская карта", callback_data="pay_yookassa")
@@ -871,10 +874,10 @@ def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboar
         builder.button(text="💳 Карты (UAH/RUB/KZT, World) / СБП — Aaio", callback_data="topup_pay_aaio")
     if payment_methods and payment_methods.get("cryptomus"):
         builder.button(text="🌐 Мультивалютная крипта (USDT, BTC...) — Cryptomus", callback_data="topup_pay_cryptomus")
-    if payment_methods and payment_methods.get("payok"):
-        builder.button(text="💳 Банковская карта / СБП (PayOK)", callback_data="topup_pay_payok")
     if payment_methods and payment_methods.get("lavatop"):
-        builder.button(text="⚡ Карты и СБП (Lava.top)", callback_data="topup_pay_lavatop")
+        builder.button(text="⚡ Карты РФ / СБП (Lava.top)", callback_data="topup_pay_lavatop")
+    if payment_methods and payment_methods.get("platega"):
+        builder.button(text="💳 Банковская карта / СБП (Platega)", callback_data="topup_pay_platega")
     if payment_methods and payment_methods.get("yookassa"):
         if get_setting("sbp_enabled"):
             builder.button(text="🏦 СБП / Банковская карта", callback_data="topup_pay_yookassa")

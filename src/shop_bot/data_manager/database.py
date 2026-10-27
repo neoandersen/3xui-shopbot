@@ -388,19 +388,16 @@ def initialize_db():
                 "cryptomus_enabled": "false",
                 "cryptomus_merchant_id": None,
                 "cryptomus_api_key": None,
-                # PayOK payments (cards, SBP, P2P)
-                "payok_enabled": "false",
-                "payok_api_id": None,
-                "payok_api_key": None,
-                "payok_shop_id": None,
-                "payok_secret_key": None,
-                "payok_currency": "RUB",
                 # Lava.top payments (cards RF/World, SBP)
                 "lavatop_enabled": "false",
                 "lavatop_api_key": None,
                 "lavatop_offer_id": None,
-                "lavatop_webhook_key": None,
                 "lavatop_currency": "RUB",
+                # Platega.io payments
+                "platega_enabled": "false",
+                "platega_merchant_id": None,
+                "platega_secret": None,
+                "panel_domain": None,
                 # Base currency settings
                 "base_currency": "USD",
                 "max_keys": "50",
@@ -455,6 +452,19 @@ def initialize_db():
                     logging.info("Добавлена колонка xui_client_uuid в таблицу vpn_keys")
             except Exception as e:
                 logging.warning(f"Ошибка при добавлении колонок в таблицу vpn_keys: {e}")
+
+            # Миграция: убедиться в наличии колонок status и is_deleted в user_keys
+            try:
+                cursor.execute("PRAGMA table_info(user_keys)")
+                uk_cols = {row[1] for row in cursor.fetchall()}
+                if 'status' not in uk_cols:
+                    cursor.execute("ALTER TABLE user_keys ADD COLUMN status TEXT DEFAULT 'active'")
+                    logging.info("Добавлена колонка status в таблицу user_keys")
+                if 'is_deleted' not in uk_cols:
+                    cursor.execute("ALTER TABLE user_keys ADD COLUMN is_deleted BOOLEAN DEFAULT 0")
+                    logging.info("Добавлена колонка is_deleted в таблицу user_keys")
+            except Exception as e:
+                logging.warning(f"Ошибка при добавлении колонок в таблицу user_keys: {e}")
 
             # Безопасная авто-миграция: атрибуция и онбординг в таблицу users (docs/SHOPBOT_AI_AND_ATTRIBUTION_SPEC.md)
             try:
@@ -1417,10 +1427,11 @@ def delete_key_by_id(key_id: int) -> bool:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM vpn_keys WHERE key_id = ?", (key_id,))
+            cursor.execute("DELETE FROM user_keys WHERE id = ?", (key_id,))
             affected = cursor.rowcount
+            cursor.execute("DELETE FROM vpn_keys WHERE key_id = ?", (key_id,))
             conn.commit()
-            return affected > 0
+            return affected > 0 or cursor.rowcount > 0
     except sqlite3.Error as e:
         logging.error(f"Не удалось удалить ключ по id {key_id}: {e}")
         return False
@@ -2797,7 +2808,10 @@ def get_keys_for_host(host_name: str) -> list[dict]:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM user_keys WHERE TRIM(host_name) = TRIM(?)", (host_name,))
+            cursor.execute(
+                "SELECT * FROM user_keys WHERE TRIM(host_name) = TRIM(?) AND (status IS NULL OR status != 'deleted') AND (is_deleted IS NULL OR is_deleted = 0)",
+                (host_name,)
+            )
             rows = cursor.fetchall()
             if not rows:
                 cursor.execute("SELECT * FROM vpn_keys WHERE TRIM(host_name) = TRIM(?)", (host_name,))
@@ -2832,7 +2846,9 @@ def update_key_status_from_server(key_email: str, xui_client_data):
             if xui_client_data:
                 expiry_date = datetime.fromtimestamp(xui_client_data.expiry_time / 1000)
                 cursor.execute("UPDATE vpn_keys SET xui_client_uuid = ?, expiry_date = ? WHERE key_email = ?", (xui_client_data.id, expiry_date, key_email))
+                cursor.execute("UPDATE user_keys SET client_uuid = ?, expiry_time = ?, status = 'active' WHERE email = ?", (xui_client_data.id, int(xui_client_data.expiry_time), key_email))
             else:
+                cursor.execute("DELETE FROM user_keys WHERE email = ?", (key_email,))
                 cursor.execute("DELETE FROM vpn_keys WHERE key_email = ?", (key_email,))
             conn.commit()
     except sqlite3.Error as e:

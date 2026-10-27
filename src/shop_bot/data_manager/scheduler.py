@@ -192,6 +192,10 @@ async def sync_keys_with_panels():
                         logger.debug(f"Scheduler: Синхронизирован ключ '{key_email}' для хоста '{host_name}' (обновлён).")
                 else:
                     logger.warning(f"Scheduler: Ключ '{key_email}' для хоста '{host_name}' не найден на сервере. Помечаю к удалению в локальной БД.")
+                    key_id = db_key.get('id') or db_key.get('key_id')
+                    if key_id:
+                        database.delete_key_by_id(key_id)
+                    database.delete_key_by_email(key_email)
                     database.update_key_status_from_server(key_email, None)
                     total_affected_records += 1
 

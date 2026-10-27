@@ -34,7 +34,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import html as py_html
 
 from shop_bot.bot import keyboards
-from shop_bot.modules import xui_api, aaio_payment, cryptomus_payment, payok_payment, lavatop_payment
+from shop_bot.modules import xui_api, aaio_payment, cryptomus_payment, lavatop_payment, platega_payment
 from shop_bot.services import ai_onboarding
 from shop_bot.data_manager.database import (
     get_user, add_new_key, get_user_keys, update_user_stats,
@@ -956,70 +956,7 @@ def get_user_router() -> Router:
             await callback.message.edit_text("❌ Не удалось создать счёт Cryptomus. Проверьте настройки шлюза.")
             await state.clear()
 
-    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_payok")
-    async def topup_pay_payok_handler(callback: types.CallbackQuery, state: FSMContext):
-        await callback.answer("Создаю счёт PayOK...")
-        data = await state.get_data()
-        user_id = callback.from_user.id
-        amount = float(data.get('topup_amount', 0))
-        if amount <= 0:
-            await callback.message.edit_text("❌ Некорректная сумма пополнения. Повторите ввод.")
-            await state.clear()
-            return
-
-        order_id = str(uuid.uuid4())
-        user_currency = get_user_preferred_currency(user_id)
-        amount_usd = float(amount)
-        cfg_curr = (get_setting("payok_currency") or "RUB").upper().strip()
-        payok_currency = user_currency if user_currency in ["RUB", "USD"] else cfg_curr
-
-        metadata = {
-            "payment_id": order_id,
-            "user_id": user_id,
-            "price": amount_usd,
-            "action": "top_up",
-            "payment_method": "PayOK",
-        }
-
-        pay_url, converted_amount, rate = payok_payment.create_payok_payment_url(
-            order_id=order_id,
-            amount_usd=amount_usd,
-            target_currency=payok_currency,
-            description=f"Пополнение баланса #{user_id}",
-            email=f"user_{user_id}@shop.local"
-        )
-        if pay_url:
-            create_pending_transaction(
-                payment_id=order_id,
-                user_id=user_id,
-                amount_rub=float(currency_service.convert_from_usd(amount_usd, "RUB")),
-                metadata=metadata,
-                provider="payok",
-                provider_payment_id=order_id,
-                amount_usd=amount_usd,
-                exchange_rate=rate,
-                currency_name=payok_currency,
-                amount_currency=converted_amount,
-                pay_currency=payok_currency,
-                exchange_rate_used=rate
-            )
-            await callback.message.edit_text(
-                f"Счёт на пополнение через PayOK сформирован:\n"
-                f"Сумма: <b>{converted_amount:.2f} {payok_currency}</b> (~${amount_usd:.2f} USD)\n\n"
-                f"Нажмите на кнопку ниже для перехода к оплате:",
-                reply_markup=keyboards.create_invoice_payment_keyboard(
-                    payment_url=pay_url,
-                    check_callback=f"check_payment_payok_{order_id}",
-                    cancel_callback="cancel_payment"
-                ),
-                parse_mode="HTML"
-            )
-            await state.clear()
-        else:
-            await callback.message.edit_text("❌ Не удалось создать счёт PayOK. Проверьте настройки шлюза.")
-            await state.clear()
-
-    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_lavatop")
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data.startswith("topup:lavatop") | (F.data == "topup_pay_lavatop"))
     async def topup_pay_lavatop_handler(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Создаю счёт Lava.top...")
         data = await state.get_data()
@@ -1031,10 +968,10 @@ def get_user_router() -> Router:
             return
 
         order_id = str(uuid.uuid4())
-        user_currency = get_user_preferred_currency(user_id)
         amount_usd = float(amount)
-        cfg_curr = (get_setting("lavatop_currency") or "RUB").upper().strip()
-        lavatop_currency = user_currency if user_currency in ["RUB", "USD"] else cfg_curr
+        amount_rub, rate = currency_service.convert_from_usd(amount_usd, "RUB")
+        amount_rub = round(float(amount_rub), 2)
+        rate = float(rate)
 
         metadata = {
             "payment_id": order_id,
@@ -1044,35 +981,30 @@ def get_user_router() -> Router:
             "payment_method": "Lava.top",
         }
 
-        pay_url, invoice_id, converted_amount, rate = await asyncio.to_thread(
-            lavatop_payment.create_lavatop_invoice,
+        ok, pay_url, invoice_id = await lavatop_payment.create_lavatop_payment(
             order_id=order_id,
-            amount_usd=amount_usd,
-            telegram_id=user_id,
-            tariff_id=0,
-            keys_count=1,
-            target_currency=lavatop_currency,
-            email=f"user_{user_id}@shop.local"
+            amount_rub=amount_rub,
+            user_tg_id=user_id
         )
-        if pay_url:
+        if ok and pay_url:
             create_pending_transaction(
                 payment_id=order_id,
                 user_id=user_id,
-                amount_rub=float(currency_service.convert_from_usd(amount_usd, "RUB")),
+                amount_rub=amount_rub,
                 metadata=metadata,
                 provider="lavatop",
                 provider_payment_id=invoice_id or order_id,
                 amount_usd=amount_usd,
                 exchange_rate=rate,
-                currency_name=lavatop_currency,
-                amount_currency=converted_amount,
+                currency_name="RUB",
+                amount_currency=amount_rub,
                 external_invoice_id=invoice_id,
-                pay_currency=lavatop_currency,
+                pay_currency="RUB",
                 exchange_rate_used=rate
             )
             await callback.message.edit_text(
                 f"Счёт на пополнение через Lava.top сформирован:\n"
-                f"Сумма: <b>{converted_amount:.2f} {lavatop_currency}</b> (~${amount_usd:.2f} USD)\n\n"
+                f"Сумма: <b>{amount_rub:.2f} RUB</b> (~${amount_usd:.2f} USD)\n\n"
                 f"Нажмите на кнопку ниже для перехода к оплате банковской картой или СБП:",
                 reply_markup=keyboards.create_invoice_payment_keyboard(
                     payment_url=pay_url,
@@ -1084,6 +1016,68 @@ def get_user_router() -> Router:
             await state.clear()
         else:
             await callback.message.edit_text("❌ Не удалось создать счёт Lava.top. Проверьте настройки шлюза.")
+            await state.clear()
+
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data.startswith("topup:platega") | (F.data == "topup_pay_platega"))
+    async def topup_pay_platega_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт Platega.io...")
+        data = await state.get_data()
+        user_id = callback.from_user.id
+        amount = float(data.get('topup_amount', 0))
+        if amount <= 0:
+            await callback.message.edit_text("❌ Некорректная сумма пополнения. Повторите ввод.")
+            await state.clear()
+            return
+
+        order_id = str(uuid.uuid4())
+        amount_usd = float(amount)
+        amount_rub, rate = currency_service.convert_from_usd(amount_usd, "RUB")
+        amount_rub = round(float(amount_rub), 2)
+        rate = float(rate)
+
+        metadata = {
+            "payment_id": order_id,
+            "user_id": user_id,
+            "price": amount_usd,
+            "action": "top_up",
+            "payment_method": "Platega",
+        }
+
+        ok, pay_url, tx_id = await platega_payment.create_platega_payment(
+            order_id=order_id,
+            amount_rub=amount_rub,
+            description=f"Пополнение баланса #{user_id}"
+        )
+        if ok and pay_url:
+            create_pending_transaction(
+                payment_id=order_id,
+                user_id=user_id,
+                amount_rub=amount_rub,
+                metadata=metadata,
+                provider="platega",
+                provider_payment_id=tx_id or order_id,
+                amount_usd=amount_usd,
+                exchange_rate=rate,
+                currency_name="RUB",
+                amount_currency=amount_rub,
+                external_invoice_id=tx_id,
+                pay_currency="RUB",
+                exchange_rate_used=rate
+            )
+            await callback.message.edit_text(
+                f"Счёт на пополнение через Platega сформирован:\n"
+                f"Сумма: <b>{amount_rub:.2f} RUB</b> (~${amount_usd:.2f} USD)\n\n"
+                f"Нажмите на кнопку ниже для перехода к оплате банковской картой или СБП:",
+                reply_markup=keyboards.create_invoice_payment_keyboard(
+                    payment_url=pay_url,
+                    check_callback=f"check_payment_platega_{order_id}",
+                    cancel_callback="cancel_payment"
+                ),
+                parse_mode="HTML"
+            )
+            await state.clear()
+        else:
+            await callback.message.edit_text("❌ Не удалось создать счёт Platega.io. Проверьте настройки шлюза.")
             await state.clear()
 
     @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_tonconnect")
@@ -3057,86 +3051,7 @@ def get_user_router() -> Router:
             await callback.message.edit_text("❌ Не удалось создать счёт Cryptomus. Попробуйте другой способ оплаты.")
             await state.clear()
 
-    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_payok")
-    async def create_payok_payment_handler(callback: types.CallbackQuery, state: FSMContext):
-        await callback.answer("Создаю ссылку на оплату через PayOK...")
-        data = await state.get_data()
-        user_id = callback.from_user.id
-        plan = get_plan_by_id(data.get('plan_id'))
-        if not plan:
-            await callback.message.edit_text("❌ Произошла ошибка при выборе тарифа.")
-            await state.clear()
-            return
-
-        final_price_usd = float(data.get('final_price', plan['price']))
-        order_id = str(uuid.uuid4())
-        user_curr = get_user_preferred_currency(user_id)
-        cfg_curr = (get_setting("payok_currency") or "RUB").upper().strip()
-        payok_currency = user_curr if user_curr in ["RUB", "USD"] else cfg_curr
-        customer_email = data.get('customer_email') or get_setting("receipt_email") or f"user_{user_id}@shop.local"
-
-        metadata = {
-            "payment_id": order_id,
-            "user_id": user_id,
-            "months": int(plan['months']),
-            "price": final_price_usd,
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": customer_email,
-            "payment_method": "PayOK",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
-
-        pay_url, converted_amount, rate = payok_payment.create_payok_payment_url(
-            order_id=order_id,
-            amount_usd=final_price_usd,
-            target_currency=payok_currency,
-            description=f"Оплата VPN #{order_id[:8]}",
-            email=customer_email
-        )
-
-        if not pay_url:
-            await callback.message.edit_text("❌ Не удалось создать счёт PayOK. Попробуйте другой способ оплаты.")
-            await state.clear()
-            return
-
-        try:
-            create_pending_transaction(
-                payment_id=order_id,
-                user_id=user_id,
-                amount_rub=float(currency_service.convert_from_usd(final_price_usd, "RUB")),
-                metadata=metadata,
-                provider="payok",
-                provider_payment_id=order_id,
-                amount_usd=final_price_usd,
-                exchange_rate=rate,
-                currency_name=payok_currency,
-                amount_currency=converted_amount,
-                pay_currency=payok_currency,
-                exchange_rate_used=rate
-            )
-        except Exception as e:
-            logger.warning(f"PayOK: не удалось создать pending-транзакцию: {e}")
-
-        await callback.message.edit_text(
-            f"Счёт на оплату через PayOK сформирован:\n"
-            f"Сумма к оплате: <b>{converted_amount:.2f} {payok_currency}</b> (~${final_price_usd:.2f} USD)\n\n"
-            f"Нажмите кнопку ниже для перехода к оплате:",
-            reply_markup=keyboards.create_invoice_payment_keyboard(
-                payment_url=pay_url,
-                check_callback=f"check_payment_payok_{order_id}",
-                cancel_callback="cancel_payment"
-            ),
-            parse_mode="HTML"
-        )
-        await state.clear()
-
-    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_lavatop")
+    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data.startswith("pay:lavatop") | (F.data == "pay_lavatop"))
     async def create_lavatop_payment_handler(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Создаю счёт в Lava.top...")
         data = await state.get_data()
@@ -3148,10 +3063,15 @@ def get_user_router() -> Router:
             return
 
         final_price_usd = float(data.get('final_price', plan['price']))
-        order_id = str(uuid.uuid4())
-        user_curr = get_user_preferred_currency(user_id)
-        cfg_curr = (get_setting("lavatop_currency") or "RUB").upper().strip()
-        lavatop_currency = user_curr if user_curr in ["RUB", "USD"] else cfg_curr
+        if callback.data and callback.data.startswith("pay:lavatop:"):
+            parts = callback.data.split(":")
+            order_id = parts[2] if len(parts) > 2 and parts[2] else str(uuid.uuid4())
+        else:
+            order_id = str(uuid.uuid4())
+
+        amount_rub, rate = currency_service.convert_from_usd(final_price_usd, "RUB")
+        amount_rub = round(float(amount_rub), 2)
+        rate = float(rate)
         customer_email = data.get('customer_email') or get_setting("receipt_email") or f"user_{user_id}@shop.local"
 
         metadata = {
@@ -3171,18 +3091,13 @@ def get_user_router() -> Router:
             "promo_discount_amount": data.get('promo_discount_amount'),
         }
 
-        pay_url, invoice_id, converted_amount, rate = await asyncio.to_thread(
-            lavatop_payment.create_lavatop_invoice,
+        ok, pay_url, invoice_id = await lavatop_payment.create_lavatop_payment(
             order_id=order_id,
-            amount_usd=final_price_usd,
-            telegram_id=user_id,
-            tariff_id=int(data.get('plan_id') or 0),
-            keys_count=int(data.get('quantity', 1)),
-            target_currency=lavatop_currency,
-            email=customer_email
+            amount_rub=amount_rub,
+            user_tg_id=user_id
         )
 
-        if not pay_url:
+        if not ok or not pay_url:
             await callback.message.edit_text("❌ Не удалось создать счёт Lava.top. Попробуйте другой способ оплаты.")
             await state.clear()
             return
@@ -3191,16 +3106,16 @@ def get_user_router() -> Router:
             create_pending_transaction(
                 payment_id=order_id,
                 user_id=user_id,
-                amount_rub=float(currency_service.convert_from_usd(final_price_usd, "RUB")),
+                amount_rub=amount_rub,
                 metadata=metadata,
                 provider="lavatop",
                 provider_payment_id=invoice_id or order_id,
                 amount_usd=final_price_usd,
                 exchange_rate=rate,
-                currency_name=lavatop_currency,
-                amount_currency=converted_amount,
+                currency_name="RUB",
+                amount_currency=amount_rub,
                 external_invoice_id=invoice_id,
-                pay_currency=lavatop_currency,
+                pay_currency="RUB",
                 exchange_rate_used=rate
             )
         except Exception as e:
@@ -3208,11 +3123,94 @@ def get_user_router() -> Router:
 
         await callback.message.edit_text(
             f"Счёт на оплату через Lava.top сформирован:\n"
-            f"Сумма к оплате: <b>{converted_amount:.2f} {lavatop_currency}</b> (~${final_price_usd:.2f} USD)\n\n"
+            f"Сумма к оплате: <b>{amount_rub:.2f} RUB</b> (~${final_price_usd:.2f} USD)\n\n"
             f"Нажмите кнопку ниже для перехода к оплате банковской картой или СБП:",
             reply_markup=keyboards.create_invoice_payment_keyboard(
                 payment_url=pay_url,
                 check_callback=f"check_lava_{order_id}",
+                cancel_callback="cancel_payment"
+            ),
+            parse_mode="HTML"
+        )
+        await state.clear()
+
+    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data.startswith("pay:platega") | (F.data == "pay_platega"))
+    async def create_platega_payment_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт в Platega.io...")
+        data = await state.get_data()
+        user_id = callback.from_user.id
+        plan = get_plan_by_id(data.get('plan_id'))
+        if not plan:
+            await callback.message.edit_text("❌ Произошла ошибка при выборе тарифа.")
+            await state.clear()
+            return
+
+        final_price_usd = float(data.get('final_price', plan['price']))
+        if callback.data and callback.data.startswith("pay:platega:"):
+            parts = callback.data.split(":")
+            order_id = parts[2] if len(parts) > 2 and parts[2] else str(uuid.uuid4())
+        else:
+            order_id = str(uuid.uuid4())
+
+        amount_rub, rate = currency_service.convert_from_usd(final_price_usd, "RUB")
+        amount_rub = round(float(amount_rub), 2)
+        rate = float(rate)
+        customer_email = data.get('customer_email') or get_setting("receipt_email") or f"user_{user_id}@shop.local"
+
+        metadata = {
+            "payment_id": order_id,
+            "user_id": user_id,
+            "months": int(plan['months']),
+            "price": final_price_usd,
+            "quantity": int(data.get('quantity', 1)),
+            "action": data.get('action'),
+            "key_id": data.get('key_id'),
+            "host_name": data.get('host_name'),
+            "plan_id": data.get('plan_id'),
+            "customer_email": customer_email,
+            "payment_method": "Platega",
+            "promo_code": data.get('promo_code'),
+            "promo_discount_percent": data.get('promo_discount_percent'),
+            "promo_discount_amount": data.get('promo_discount_amount'),
+        }
+
+        ok, pay_url, tx_id = await platega_payment.create_platega_payment(
+            order_id=order_id,
+            amount_rub=amount_rub,
+            description=f"Оплата тарифа #{order_id[:8]}"
+        )
+
+        if not ok or not pay_url:
+            await callback.message.edit_text("❌ Не удалось создать счёт Platega.io. Попробуйте другой способ оплаты.")
+            await state.clear()
+            return
+
+        try:
+            create_pending_transaction(
+                payment_id=order_id,
+                user_id=user_id,
+                amount_rub=amount_rub,
+                metadata=metadata,
+                provider="platega",
+                provider_payment_id=tx_id or order_id,
+                amount_usd=final_price_usd,
+                exchange_rate=rate,
+                currency_name="RUB",
+                amount_currency=amount_rub,
+                external_invoice_id=tx_id,
+                pay_currency="RUB",
+                exchange_rate_used=rate
+            )
+        except Exception as e:
+            logger.warning(f"Platega: не удалось создать pending-транзакцию: {e}")
+
+        await callback.message.edit_text(
+            f"Счёт на оплату через Platega сформирован:\n"
+            f"Сумма к оплате: <b>{amount_rub:.2f} RUB</b> (~${final_price_usd:.2f} USD)\n\n"
+            f"Нажмите кнопку ниже для перехода к оплате банковской картой или СБП:",
+            reply_markup=keyboards.create_invoice_payment_keyboard(
+                payment_url=pay_url,
+                check_callback=f"check_payment_platega_{order_id}",
                 cancel_callback="cancel_payment"
             ),
             parse_mode="HTML"
@@ -3251,10 +3249,8 @@ def get_user_router() -> Router:
 
         elif provider in ("lavatop", "lava"):
             invoice_id = (tx.get("external_invoice_id") or tx.get("provider_payment_id") or order_id) if tx else order_id
-            res = await asyncio.to_thread(lavatop_payment.check_lavatop_invoice_status, invoice_id=invoice_id)
-            data = res.get("data") if isinstance(res.get("data"), dict) else res
-            status = str(data.get("status") or "").lower()
-            if status in ["paid", "success", "completed"]:
+            status = await lavatop_payment.check_lavatop_status(invoice_id)
+            if status and str(status).lower() in ["paid", "success", "completed"]:
                 tx_completed = find_and_complete_pending_transaction(
                     payment_id=order_id,
                     amount_rub=None,
@@ -3265,10 +3261,10 @@ def get_user_router() -> Router:
                     await callback.message.edit_text("✅ Оплата через Lava.top успешно подтверждена и подписка активирована!")
                     return
 
-        elif provider == "payok":
-            tx_check = get_transaction_by_provider_payment_id("payok", order_id)
+        elif provider == "platega":
+            tx_check = get_transaction_by_provider_payment_id("platega", order_id)
             if tx_check and tx_check.get("status") in ("paid", "completed", "success"):
-                await callback.message.edit_text("✅ Оплата через PayOK подтверждена и обработана!")
+                await callback.message.edit_text("✅ Оплата через Platega подтверждена и обработана!")
                 return
 
         await callback.answer("⏳ Оплата ещё обрабатывается. Если вы уже оплатили, подождите 1-2 минуты.", show_alert=True)
