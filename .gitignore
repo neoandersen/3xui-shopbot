@@ -1,27 +1,58 @@
+# ==========================================
+# 3X-UI ShopBot Environment & Data Exclusions
+# ==========================================
+
+# Базы данных SQLite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite3
+users.db
+
+# Файлы окружения и конфигурации с секретами
+config.json
+.env
+*.env
+.env.*
+
+# Приватные SSH-ключи и сертификаты
+data/ssh_keys/*
+!data/ssh_keys/.gitkeep
+*.pem
+*.key
+*.crt
+
+# Временные триггеры харденинга и аудиты
+data/run_harden.trigger
+data/security_audit.json
+
+# Журналы логирования
+*.log
+logs/
+
+# Кэш Python и виртуальные окружения
+__pycache__/
+*.py[cod]
+*$py.class
 .venv/
 venv/
-env/
 ENV/
-
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
+env/
 build/
 dist/
 *.egg-info/
 
-.env
-*.db
-TODO
-
+# Служебные файлы IDE и ОС
 .idea/
 .vscode/
-*.DS_Store
+*.swp
+*.swo
+.DS_Store
 
 # Tests and archives
 test/
 tests/
 archive/
 _archive/
+TODO

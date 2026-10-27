@@ -1,0 +1,100 @@
+# ==============================================================================
+# 3X-UI ShopBot — Reverse Proxy для клиентских ссылок подписок (VLESS Reality)
+# Файл-шаблон: deploy/nginx/subscription.conf.example
+# ==============================================================================
+#
+# НАЗНАЧЕНИЕ:
+# 1. Прием внешних клиентских HTTPS-запросов за ссылками подписок на стандартном порту 443.
+# 2. Проксирование запросов на внутренний локальный порт панели 3X-UI (по умолчанию 2096).
+# 3. Сокрытие порта 2096 от внешнего сканирования (Shodan, Censys) и обход блокировок
+#    провайдеров по нестандартным портам.
+# 4. Изоляция сервиса выдачи подписок на отдельном домене/поддомене (например, sub.example.com).
+#
+# ПОШАГОВАЯ ИНСТРУКЦИЯ ПО РАЗВЕРТЫВАНИЮ НА СЕРВЕРЕ:
+#
+# 1. Скопируйте данный шаблон в каталог доступных сайтов Nginx:
+#    sudo cp deploy/nginx/subscription.conf.example /etc/nginx/sites-available/sub.example.com.conf
+#
+# 2. Отредактируйте скопированный файл:
+#    sudo nano /etc/nginx/sites-available/sub.example.com.conf
+#    - Замените везде 'sub.example.com' на ваш реальный поддомен.
+#    - Проверьте локальный порт панели 3X-UI в директиве proxy_pass (по умолчанию 127.0.0.1:2096).
+#
+# 3. Получите бесплатный SSL-сертификат Let's Encrypt через Certbot:
+#    sudo certbot --nginx -d sub.example.com
+#
+# 4. Создайте символическую ссылку для активации виртуального хоста:
+#    sudo ln -s /etc/nginx/sites-available/sub.example.com.conf /etc/nginx/sites-enabled/
+#
+# 5. Проверьте синтаксис конфигурации Nginx и перезагрузите службу:
+#    sudo nginx -t && sudo systemctl reload nginx
+# ==============================================================================
+
+# Редирект незащищенного трафика HTTP (порт 80) на HTTPS (порт 443)
+server {
+    listen 80;
+    listen [::]:80;
+    server_name sub.example.com;
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# Основной виртуальный хост HTTPS
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name sub.example.com;
+
+    # --------------------------------------------------------------------------
+    # SSL-сертификаты (автоматически прописываются и обновляются Certbot)
+    # --------------------------------------------------------------------------
+    ssl_certificate /etc/letsencrypt/live/sub.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
+
+    # --------------------------------------------------------------------------
+    # Параметры безопасности TLS (Mozilla Intermediate Recommendations)
+    # --------------------------------------------------------------------------
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SubSSL:10m;
+    ssl_session_tickets off;
+
+    # Базовые заголовки защиты периметра
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer-when-downgrade always;
+
+    # --------------------------------------------------------------------------
+    # Проксирование запросов подписки (/sub/ -> 3X-UI core)
+    # --------------------------------------------------------------------------
+    location /sub/ {
+        # Внутренний локальный порт подписок панели 3X-UI
+        proxy_pass http://127.0.0.1:2096/sub/;
+
+        # Передача оригинальных заголовков клиента
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Отключение буферизации для мгновенной отдачи потока конфигураций
+        proxy_buffering off;
+        proxy_cache off;
+
+        # Таймауты соединения
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    # --------------------------------------------------------------------------
+    # Защита от сканирования: все обращения вне пути /sub/ отклоняются (HTTP 404)
+    # --------------------------------------------------------------------------
+    location / {
+        return 404;
+    }
+}
