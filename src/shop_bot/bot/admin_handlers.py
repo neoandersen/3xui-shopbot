@@ -2090,7 +2090,13 @@ def get_admin_router() -> Router:
             await callback.answer("У вас нет прав.", show_alert=True)
             return
         await callback.answer()
-        host_name = callback.data.split("admin_gift_pick_host_")[-1]
+        token = callback.data.split("admin_gift_pick_host_")[-1]
+        hosts = get_all_hosts()
+        host = keyboards.find_host_by_callback_token(hosts, token)
+        if not host:
+            await callback.message.answer("❌ Сервер не найден")
+            return
+        host_name = host.get('host_name')
         await state.update_data(host_name=host_name)
         await state.set_state(AdminGiftKey.picking_days)
         await callback.message.edit_text(
@@ -2471,7 +2477,13 @@ def get_admin_router() -> Router:
             await callback.answer("У вас нет прав.", show_alert=True)
             return
         await callback.answer()
-        host_name = callback.data.split("admin_hostkeys_pick_host_")[-1]
+        token = callback.data.split("admin_hostkeys_pick_host_")[-1]
+        hosts = get_all_hosts()
+        host = keyboards.find_host_by_callback_token(hosts, token)
+        if not host:
+            await callback.answer("Хост не найден.", show_alert=True)
+            return
+        host_name = host.get('host_name')
         # Сохраняем контекст текущего хоста, чтобы корректно работать с кнопкой "Назад"
         try:
             await state.update_data(hostkeys_host=host_name)

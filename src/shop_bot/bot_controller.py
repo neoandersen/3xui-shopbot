@@ -57,6 +57,10 @@ class BotController:
         token = database.get_setting("telegram_bot_token")
         bot_username = database.get_setting("telegram_bot_username")
         admin_id = database.get_setting("admin_telegram_id")
+        if not admin_id:
+            admin_ids = database.get_admin_ids()
+            if admin_ids:
+                admin_id = admin_ids[0]
 
         if not all([token, bot_username, admin_id]):
             return {
@@ -143,6 +147,10 @@ class BotController:
             handlers.ADMIN_ID = admin_id
 
             self._task = asyncio.run_coroutine_threadsafe(self._start_polling(), self._loop)
+            try:
+                database.update_setting("bot_enabled", "true")
+            except Exception as se:
+                logger.warning(f"Не удалось обновить статус bot_enabled: {se}")
             logger.info("Команда на запуск передана в цикл событий.")
             return {"status": "success", "message": "Команда на запуск бота отправлена."}
             
@@ -160,6 +168,10 @@ class BotController:
             return {"status": "error", "message": "Критическая ошибка: компоненты бота недоступны."}
 
         logger.info("Отправляю сигнал на корректную остановку...")
+        try:
+            database.update_setting("bot_enabled", "false")
+        except Exception as se:
+            logger.warning(f"Не удалось обновить статус bot_enabled: {se}")
         asyncio.run_coroutine_threadsafe(self._dp.stop_polling(), self._loop)
         
         return {"status": "success", "message": "Команда на остановку бота отправлена."}

@@ -12,7 +12,7 @@
   <td>
     {% if user.user_keys %} {{ user.user_keys | length }} шт. {% else %} 0 {% endif %}
   </td>
-  <td>{{ '%.2f'|format(user.balance or 0) }}</td>
+  <td>${{ '%.2f'|format(user.balance or 0) }}</td>
   <td>
     <div class="btn-list">
       <a class="btn btn-primary btn-sm btn-glass" href="{{ url_for('admin_keys_page') }}?user_id={{ user.telegram_id }}">Выдать ключ</a>

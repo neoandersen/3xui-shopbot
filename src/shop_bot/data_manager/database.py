@@ -392,6 +392,7 @@ def initialize_db():
                 "base_currency": "USD",
                 "max_keys": "50",
                 "stars_rate_usd": "0.02",
+                "bot_enabled": "true",
             }
             run_migration()
             for key, value in default_settings.items():
@@ -1846,15 +1847,23 @@ def update_setting(key: str, value: str):
     except sqlite3.Error as e:
         logging.error(f"Не удалось обновить настройку '{key}': {e}")
 
-def create_plan(host_name: str, plan_name: str, months: int, price: float):
+def create_plan(host_name: str, plan_name: str, months: int, price: float, price_currency: str = "USD"):
     try:
         host_name = normalize_host_name(host_name)
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO plans (host_name, plan_name, months, price) VALUES (?, ?, ?, ?)",
-                (host_name, plan_name, months, price)
-            )
+            cursor.execute("PRAGMA table_info(plans)")
+            cols = {row[1] for row in cursor.fetchall()}
+            if "price_currency" in cols:
+                cursor.execute(
+                    "INSERT INTO plans (host_name, plan_name, months, price, price_currency) VALUES (?, ?, ?, ?, ?)",
+                    (host_name, plan_name, months, price, price_currency)
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO plans (host_name, plan_name, months, price) VALUES (?, ?, ?, ?)",
+                    (host_name, plan_name, months, price)
+                )
             conn.commit()
             logging.info(f"Создан новый план '{plan_name}' для хоста '{host_name}'.")
     except sqlite3.Error as e:

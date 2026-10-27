@@ -57,7 +57,7 @@
               <option value="">— Не выбран —</option>
             </select>
           </div>
-          <span class="input-group-text rounded-3 fw-semibold text-white bg-purple" id="plan_price" style="border:0;">— RUB</span>
+          <span class="input-group-text rounded-3 fw-semibold text-white bg-purple" id="plan_price" style="border:0;">— USD</span>
         </div>
       </div>
       <div class="col-12 col-sm-2">
@@ -361,23 +361,29 @@
         const items = (d && d.ok && d.items) ? d.items : [];
         const saved = (JSON.parse(localStorage.getItem('admin_keys_form')||'{}')||{}).plan_select;
         // Важно: value должен быть уникальным -> используем plan_id, а months/price кладём в data-атрибуты
-        planSel.innerHTML = '<option value="">— Не выбран —</option>' + items.map(p => `<option value="${p.plan_id}" data-months="${p.months}" data-price="${p.price||0}">${p.plan_name} (${p.months} мес.) — ${Number(p.price||0).toFixed(0)} RUB</option>`).join('');
+        planSel.innerHTML = '<option value="">— Не выбран —</option>' + items.map(p => {
+          const curr = p.price_currency || 'USD';
+          const priceVal = Number(p.price || 0);
+          const formattedPrice = curr === 'USD' ? `$${priceVal.toFixed(2)}` : `${priceVal.toFixed(2)} ${curr}`;
+          return `<option value="${p.plan_id}" data-months="${p.months}" data-price="${p.price||0}" data-currency="${curr}">${p.plan_name} (${p.months} мес.) — ${formattedPrice}</option>`;
+        }).join('');
         planSel.disabled = false;
         // восстановим выбранный тариф, если есть
         if (saved) {
           planSel.value = saved;
           const opt = planSel.options[planSel.selectedIndex];
           const price = opt ? Number(opt.getAttribute('data-price')||0) : 0;
-          if (priceEl) priceEl.textContent = saved ? `${price.toFixed(0)} RUB` : '— RUB';
+          const curr = opt ? (opt.getAttribute('data-currency') || 'USD') : 'USD';
+          if (priceEl) priceEl.textContent = saved ? (curr === 'USD' ? `$${price.toFixed(2)}` : `${price.toFixed(2)} ${curr}`) : '— USD';
           const months = opt ? Number(opt.getAttribute('data-months')||0) : 0;
           if (months > 0) setExpiryDays(months * 30);
-        } else if (priceEl) { priceEl.textContent = '— RUB'; }
+        } else if (priceEl) { priceEl.textContent = '— USD'; }
         // обновим мягкий селектор тарифа
         refreshSoftSelect('plan_select', '— Не выбран —');
       } catch(_) {
         planSel.innerHTML = '<option value="">— Не выбран —</option>';
         planSel.disabled = false;
-        if (priceEl) priceEl.textContent = '— RUB';
+        if (priceEl) priceEl.textContent = '— USD';
       }
     }
     // Инициализация после восстановления
@@ -525,7 +531,8 @@
         const months = opt ? Number(opt.getAttribute('data-months')||0) : 0;
         if (months > 0) setExpiryDays(months * 30);
         const price = opt ? Number(opt.getAttribute('data-price')||0) : 0;
-        if (priceEl) priceEl.textContent = `${price.toFixed(0)} RUB`;
+        const curr = opt ? (opt.getAttribute('data-currency') || 'USD') : 'USD';
+        if (priceEl) priceEl.textContent = (curr === 'USD' ? `$${price.toFixed(2)}` : `${price.toFixed(2)} ${curr}`);
       });
     }
     if (daysInput) {

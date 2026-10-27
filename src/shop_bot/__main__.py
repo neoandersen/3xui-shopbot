@@ -126,7 +126,10 @@ def main():
         flask_app.config['EVENT_LOOP'] = loop
         
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda sig=sig: asyncio.create_task(shutdown(sig, loop)))
+            try:
+                loop.add_signal_handler(sig, lambda sig=sig: asyncio.create_task(shutdown(sig, loop)))
+            except (NotImplementedError, AttributeError):
+                pass
         
         flask_thread = threading.Thread(
             target=lambda: flask_app.run(host='0.0.0.0', port=1488, use_reloader=False, debug=False),
@@ -136,7 +139,18 @@ def main():
         
         logger.info("Flask-сервер запущен: http://0.0.0.0:1488")
             
-        logger.info("Приложение запущено. Бота можно стартовать из веб-панели.")
+        # Автозапуск Telegram-бота при старте приложения
+        bot_enabled = database.get_setting("bot_enabled")
+        # По умолчанию бот считается включенным, если явно не установлен статус выключения
+        if str(bot_enabled).lower() not in ("false", "0", "disabled", "stopped"):
+            logger.info("Инициализация автозапуска Telegram-бота...")
+            start_result = bot_controller.start()
+            if start_result.get("status") == "success":
+                logger.info("Telegram-бот успешно запущен (polling активен).")
+            else:
+                logger.warning(f"Автозапуск Telegram-бота не выполнен: {start_result.get('message')}. Бота можно стартовать из веб-панели.")
+        else:
+            logger.info("Telegram-бот отключен в настройках (bot_enabled=false). Бота можно стартовать из веб-панели.")
         
         asyncio.create_task(periodic_subscription_check(bot_controller))
 

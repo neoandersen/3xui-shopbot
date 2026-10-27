@@ -96,6 +96,8 @@ ALL_SETTINGS_KEYS = [
     "cryptomus_enabled", "cryptomus_merchant_id", "cryptomus_api_key",
     # Currency configuration
     "base_currency",
+    # Bot lifecycle
+    "bot_enabled",
 ]
 
 def create_webhook_app(bot_controller_instance):
@@ -555,6 +557,7 @@ def create_webhook_app(bot_controller_instance):
                     "plan_name": p.get('plan_name'),
                     "months": p.get('months'),
                     "price": p.get('price'),
+                    "price_currency": p.get('price_currency') or 'USD',
                 } for p in plans
             ]
             return jsonify({"ok": True, "items": data})
@@ -1553,6 +1556,7 @@ def create_webhook_app(bot_controller_instance):
     @flask_app.route('/start-bot', methods=['POST'])
     @login_required
     def start_bot_route():
+        update_setting("bot_enabled", "true")
         result = _bot_controller.start()
         flash(result['message'], 'success' if result['status'] == 'success' else 'danger')
         return redirect(request.referrer or url_for('dashboard_page'))
@@ -1560,6 +1564,7 @@ def create_webhook_app(bot_controller_instance):
     @flask_app.route('/stop-bot', methods=['POST'])
     @login_required
     def stop_bot_route():
+        update_setting("bot_enabled", "false")
         result = _bot_controller.stop()
         _wait_for_stop(_bot_controller)
         flash(result['message'], 'success' if result['status'] == 'success' else 'danger')
@@ -1568,6 +1573,7 @@ def create_webhook_app(bot_controller_instance):
     @flask_app.route('/stop-both-bots', methods=['POST'])
     @login_required
     def stop_both_bots_route():
+        update_setting("bot_enabled", "false")
         main_result = _bot_controller.stop()
         support_result = _support_bot_controller.stop()
 
@@ -1589,6 +1595,7 @@ def create_webhook_app(bot_controller_instance):
     @flask_app.route('/start-both-bots', methods=['POST'])
     @login_required
     def start_both_bots_route():
+        update_setting("bot_enabled", "true")
         main_result = _bot_controller.start()
         loop = current_app.config.get('EVENT_LOOP')
         if loop and loop.is_running():
@@ -1775,7 +1782,8 @@ def create_webhook_app(bot_controller_instance):
             host_name=request.form['host_name'],
             plan_name=request.form['plan_name'],
             months=int(request.form['months']),
-            price=float(request.form['price'])
+            price=float(request.form['price']),
+            price_currency="USD"
         )
         flash(f"Новый тариф для хоста '{request.form['host_name']}' добавлен.", 'success')
         return redirect(url_for('settings_page', tab='hosts'))
@@ -2208,7 +2216,7 @@ def create_webhook_app(bot_controller_instance):
                 label = form.get('label', '')
                 
                 # Здесь должна быть логика обработки платежа
-                logger.info(f"YooMoney payment: {amount} RUB, label: {label}")
+                logger.info(f"YooMoney payment: {amount}, label: {label}")
                 
                 # Уведомляем бота о платеже
                 try:

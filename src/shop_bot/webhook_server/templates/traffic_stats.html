@@ -87,17 +87,17 @@
                 <div class="row align-items-center">
                     <div class="col-auto">
                         <span class="bg-yellow text-white avatar">
-                            <i class="ti ti-currency-ruble fs-2"></i>
+                            <i class="ti ti-currency-dollar fs-2"></i>
                         </span>
                     </div>
                     <div class="col">
                         <div class="font-weight-medium text-secondary">Общая выручка</div>
-                        <div class="text-reset fs-2 font-weight-bold">{{ "%.2f"|format(total_income) }} ₽</div>
+                        <div class="text-reset fs-2 font-weight-bold">${{ "%.2f"|format(total_income) }}</div>
                         <div class="text-muted small">
                             {% if total_sales > 0 %}
-                            Ср. чек: {{ "%.0f"|format(total_income / total_sales) }} ₽
+                            Ср. чек: ${{ "%.2f"|format(total_income / total_sales) }}
                             {% else %}
-                            Ср. чек: 0 ₽
+                            Ср. чек: $0.00
                             {% endif %}
                         </div>
                     </div>
@@ -126,7 +126,7 @@
                     <th class="text-center">CR в тест</th>
                     <th class="text-center">Продажи</th>
                     <th class="text-center">CR в оплату</th>
-                    <th class="text-end">Выручка</th>
+                    <th class="text-end">Выручка ($)</th>
                 </tr>
             </thead>
             <tbody>
@@ -174,7 +174,7 @@
                                 <span class="badge {{ 'bg-green' if cr_s >= 20 else 'bg-secondary-lt' }}">{{ cr_s }}%</span>
                             </td>
                             <td class="text-end font-weight-bold text-success fs-3">
-                                {{ "%.2f"|format(income) }} ₽
+                                ${{ "%.2f"|format(income) }}
                             </td>
                         </tr>
                     {% endfor %}

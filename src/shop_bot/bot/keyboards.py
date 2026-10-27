@@ -18,11 +18,27 @@ main_reply_keyboard = ReplyKeyboardMarkup(
 )
 
 
+def safe_cb(data: str) -> str:
+    """Гарантировать, что callback_data не превышает 64 байта для Telegram API."""
+    raw = data.encode('utf-8')
+    if len(raw) <= 64:
+        return data
+    digest = hashlib.sha1(raw).hexdigest()[:10]
+    parts = data.split('_')
+    prefix = '_'.join(parts[:-1]) if len(parts) > 1 else data[:40]
+    safe = f"{prefix}_{digest}"
+    while len(safe.encode('utf-8')) > 64 and len(prefix) > 0:
+        prefix = prefix[:-1]
+        safe = f"{prefix}_{digest}"
+    logger.warning(f"Callback data превысил 64 байта ({len(raw)}b): '{data}' -> сокращён до '{safe}'")
+    return safe
+
+
 def encode_host_callback_token(host_name: str) -> str:
-    """Сформировать короткий ASCII-токен для host_name для использования в callback_data."""
+    """Сформировать короткий ASCII-токен для host_name для использования в callback_data (<=25 байт)."""
     normalized = normalize_host_name(host_name)
     slug = re.sub(r"[^a-z0-9]+", "-", normalized.lower()).strip("-")
-    slug = slug[:24]
+    slug = slug[:16]
     digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:8]
     if slug:
         return f"{slug}-{digest}"
@@ -44,6 +60,10 @@ def find_host_by_callback_token(hosts: list[dict], token: str) -> dict | None:
         return None
     for host in hosts or []:
         if encode_host_callback_token(host.get('host_name', '')) == token:
+            return host
+    # fallback: прямое сравнение имени хоста
+    for host in hosts or []:
+        if host.get('host_name') == token:
             return host
     return None
 
@@ -623,8 +643,9 @@ def create_host_selection_keyboard(hosts: list, action: str) -> InlineKeyboardMa
 def create_plans_keyboard(plans: list[dict], action: str, host_name: str, key_id: int = 0, currency: str = "USD") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     from shop_bot.services import currency_service
+    host_token = encode_host_callback_token(host_name)
     for plan in plans:
-        callback_data = f"buy_{host_name}_{plan['plan_id']}_{action}_{key_id}"
+        callback_data = safe_cb(f"buy_{host_token}_{plan['plan_id']}_{action}_{key_id}")
         price_usd = float(plan['price'])
         price_formatted = currency_service.format_price(price_usd, currency)
         builder.button(text=f"{plan['plan_name']} - {price_formatted}", callback_data=callback_data)
@@ -995,18 +1016,18 @@ def create_admin_hosts_pick_keyboard(hosts: list[dict], action: str = "gift") ->
         for h in hosts:
             name = h.get('host_name')
             title = name or "—"
+            token = encode_host_callback_token(name or "")
             if action == "speedtest":
-                token = encode_host_callback_token(name or "")
-                builder.button(text=title, callback_data=f"admin_{action}_pick_host_{token}")
-                builder.button(text="🛠 Автоустановка", callback_data=f"admin_speedtest_autoinstall_{token}")
+                builder.button(text=title, callback_data=safe_cb(f"admin_{action}_pick_host_{token}"))
+                builder.button(text="🛠 Автоустановка", callback_data=safe_cb(f"admin_speedtest_autoinstall_{token}"))
             else:
-                builder.button(text=title, callback_data=f"admin_{action}_pick_host_{title}")
+                builder.button(text=title, callback_data=safe_cb(f"admin_{action}_pick_host_{token}"))
     else:
         builder.button(text="Хостов нет", callback_data="noop")
     # Дополнительные опции для speedtest
     if action == "speedtest":
         builder.button(text="🚀 Запустить для всех", callback_data="admin_speedtest_run_all")
-    builder.button(text="⬅️ Назад", callback_data=f"admin_{action}_back_to_users")
+    builder.button(text="⬅️ Назад", callback_data=safe_cb(f"admin_{action}_back_to_users"))
     # Сетка: по 2 в ряд для speedtest (хост + автоустановка), иначе по 1
     if action == "speedtest":
         rows = [2] * (len(hosts) if hosts else 1)

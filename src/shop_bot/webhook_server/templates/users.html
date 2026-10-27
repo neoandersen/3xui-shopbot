@@ -31,11 +31,11 @@
       </div>
       <div class="modal-body">
         <div class="mb-2 text-secondary" id="bm-user"></div>
-        <div class="mb-2">Текущий баланс: <strong id="bm-balance">0.00</strong> RUB</div>
+        <div class="mb-2">Текущий баланс: $<strong id="bm-balance">0.00</strong> USD</div>
         <form id="bm-form" class="d-flex gap-2" method="post">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-          <input class="form-control" type="text" inputmode="decimal" name="delta" placeholder="± сумма" required />
-          <button class="btn btn-primary" type="submit">Изменить</button>
+          <input class="form-control" type="text" inputmode="decimal" name="delta" placeholder="± сумма в USD ($)" required />
+          <button class="btn btn-primary" type="submit">Изменить ($)</button>
         </form>
         <hr/>
         <div class="mb-1">Рефералы: <strong id="bm-refcount">0</strong></div>
@@ -57,7 +57,7 @@
             <th>Username</th>
             <th>Статус</th>
             <th>Активные ключи</th>
-            <th>Баланс</th>
+            <th>Баланс ($)</th>
             <th class="w-1">Действия</th>
           </tr>
         </thead>
@@ -81,7 +81,7 @@
             <td>
               {% if user.user_keys %} {{ user.user_keys | length }} шт. {% else %} 0 {% endif %}
             </td>
-            <td>{{ '%.2f'|format(user.balance or 0) }}</td>
+            <td>${{ '%.2f'|format(user.balance or 0) }}</td>
             <td>
               <div class="btn-list">
                 <a class="btn btn-primary btn-sm btn-glass" href="{{ url_for('admin_keys_page') }}?user_id={{ user.telegram_id }}" title="Выдать ключ" aria-label="Выдать ключ">

@@ -324,7 +324,7 @@
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
 									<input type="text" class="form-control pill" name="plan_name" value="{{ plan.plan_name }}" placeholder="Название" required style="min-width:140px;" />
 									<input type="number" class="form-control pill" name="months" value="{{ plan.months }}" placeholder="Мес." required style="width:80px;" />
-									<input type="number" step="0.01" class="form-control pill" name="price" value="{{ plan.price }}" placeholder="Цена" required style="width:110px;" />
+									<input type="number" step="0.01" class="form-control pill" name="price" value="{{ plan.price }}" placeholder="Цена ($)" required style="width:110px;" />
 									<button type="submit" class="btn btn-primary btn-sm pill">Сохранить</button>
 								</form>
 							</div>
@@ -359,7 +359,7 @@
 							step="0.01"
 							class="form-control pill"
 							name="price"
-							placeholder="Цена"
+							placeholder="Цена ($)"
 							required
 						/>
 						<button type="submit" class="btn btn-primary btn-sm pill">
@@ -697,12 +697,12 @@
               </div>
             </div>
             <div class="mb-3">
-              <label class="form-label" for="stars_per_rub">Курс Stars за 1 RUB</label>
+              <label class="form-label" for="stars_per_rub">Курс Stars за 1 USD (legacy/резерв)</label>
               <div class="input-group with-suffix">
-                <input class="form-control pill-md" type="number" step="0.01" min="0" id="stars_per_rub" name="stars_per_rub" value="{{ settings.stars_per_rub or '1' }}" />
+                <input class="form-control pill-md" type="number" step="0.01" min="0" id="stars_per_rub" name="stars_per_rub" value="{{ settings.stars_per_rub or '50' }}" />
                 <span class="input-group-text">⭐</span>
               </div>
-              <div class="form-text text-secondary">Сколько звёзд списывать за 1 рубль. Например, 1.5 означает 1.5⭐ за 1 RUB.</div>
+              <div class="form-text text-secondary">Количество звёзд за 1 USD (по умолчанию 50 ⭐ = $1 USD). Основной расчёт ведётся по параметру stars_rate_usd ($0.02).</div>
             </div>
             <div class="mb-3">
               <label class="form-label" for="stars_title">Заголовок инвойса Stars</label>
@@ -759,7 +759,7 @@
             </div>
             {# === / ВСТАВКА КОНЧИЛАСЬ === #}
 
-            <h3 class="h4 mt-4">Настройка Aaio (Фиат без юрлица: Карты UAH/RUB/KZT, СБП)</h3>
+            <h3 class="h4 mt-4">Настройка Aaio (Фиат: Карты UAH/USD/EUR/KZT/RUB, СБП)</h3>
             <div class="mb-3">
               <input type="hidden" name="aaio_enabled" value="false" />
               <div class="form-check">

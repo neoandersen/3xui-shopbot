@@ -5,7 +5,7 @@
   </td>
   <td>{{ tx.host_name }}</td>
   <td>{{ tx.plan_name }}</td>
-  <td>{{ tx.amount_rub | round(2) }} RUB</td>
+  <td>${{ (tx.amount_usd or tx.amount_rub) | round(2) }}</td>
   <td>{{ tx.created_date.split(' ')[0] }}</td>
 </tr>
 {% endfor %}

@@ -2000,12 +2000,12 @@ def get_user_router() -> Router:
         action = parts[-2]
         key_id = int(parts[-1])
         plan_id = int(parts[-3])
-        host_name = "_".join(parts[:-3])
-
         plan = get_plan_by_id(plan_id)
         if not plan:
             await callback.message.edit_text("❌ Тариф не найден.")
             return
+
+        host_name = plan.get('host_name') or "_".join(parts[:-3])
 
         base_price_usd = float(plan['price'])
         preferred_curr = get_user_preferred_currency(callback.from_user.id)
