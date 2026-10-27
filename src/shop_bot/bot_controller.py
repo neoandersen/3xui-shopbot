@@ -129,6 +129,18 @@ class BotController:
             cryptomus_key = database.get_setting("cryptomus_api_key")
             cryptomus_enabled = (str(cryptomus_flag).lower() in ("true", "1", "yes", "on")) and bool(cryptomus_merchant and cryptomus_key)
 
+            # PayOK
+            payok_flag = database.get_setting("payok_enabled")
+            payok_shop = database.get_setting("payok_shop_id")
+            payok_secret = database.get_setting("payok_secret_key")
+            payok_enabled = (str(payok_flag).lower() in ("true", "1", "yes", "on")) and bool(payok_shop and payok_secret)
+
+            # Lava.top
+            lavatop_flag = database.get_setting("lavatop_enabled")
+            lavatop_key = database.get_setting("lavatop_api_key")
+            lavatop_offer = database.get_setting("lavatop_offer_id")
+            lavatop_enabled = (str(lavatop_flag).lower() in ("true", "1", "yes", "on")) and bool(lavatop_key and lavatop_offer)
+
             if yookassa_enabled:
                 Configuration.account_id = yookassa_shop_id
                 Configuration.secret_key = yookassa_secret_key
@@ -142,6 +154,8 @@ class BotController:
                 "yoomoney": yoomoney_enabled,
                 "aaio": aaio_enabled,
                 "cryptomus": cryptomus_enabled,
+                "payok": payok_enabled,
+                "lavatop": lavatop_enabled,
             }
             handlers.TELEGRAM_BOT_USERNAME = bot_username
             handlers.ADMIN_ID = admin_id

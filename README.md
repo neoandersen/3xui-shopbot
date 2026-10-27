@@ -86,6 +86,8 @@
   <tr>
     <td><b>Платежные шлюзы</b></td>
     <td>
+      • <b>PayOK</b>: банковские карты РФ, СБП и P2P-платежи без оформления ИП (MD5-подпись)<br>
+      • <b>Lava.top</b>: прием карт РФ, зарубежных карт и СБП для цифровых услуг (HMAC-SHA256)<br>
       • <b>Aaio</b>: банковские карты (World, UAH, RUB, KZT) и СБП (0% для самозанятых/ИП)<br>
       • <b>Cryptomus</b>: прием криптовалют (USDT, USDC, BTC, TON, ETH, LTC, XMR)<br>
       • <b>Telegram Stars</b>: официальные цифровые платежи внутри Telegram<br>
@@ -175,6 +177,16 @@ docker compose logs -f 3xui-shopbot
 ## 💳 Настройка платежных шлюзов
 
 Настройка шлюзов производится в веб-панели (**Настройки -> Настройки платежных систем**):
+
+### PayOK (Банковские карты РФ, СБП, P2P)
+- Зарегистрируйте магазин на сервисе [PayOK](https://payok.io).
+- Укажите в панели: `payok_shop_id`, `payok_secret_key`, выберите валюту счетов (`RUB` или `USD`).
+- URL вебхука в ЛК PayOK: `https://panel.your-domain.com/webhook/payok`.
+
+### Lava.top (Карты РФ/Мир, СБП для цифровых услуг)
+- Создайте оффер для цифровых товаров в сервисе [Lava.top](https://gate.lava.top).
+- Укажите в панели: `lavatop_api_key`, `lavatop_offer_id`, `lavatop_webhook_key`.
+- URL вебхука в ЛК Lava.top: `https://panel.your-domain.com/webhook/lavatop`.
 
 ### Aaio (Банковские карты, СБП)
 - Создайте мерчант в сервисе Aaio.
