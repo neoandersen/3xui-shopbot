@@ -93,66 +93,12 @@ class BotController:
             except Exception as e:
                 logger.warning(f"Не удалось удалить вебхук перед запуском опроса: {e}")
 
-            yookassa_shop_id = database.get_setting("yookassa_shop_id")
-            yookassa_secret_key = database.get_setting("yookassa_secret_key")
-            yookassa_enabled = bool(yookassa_shop_id and yookassa_secret_key)
-
-            cryptobot_token = database.get_setting("cryptobot_token")
-            cryptobot_enabled = bool(cryptobot_token)
-
-            heleket_shop_id = database.get_setting("heleket_merchant_id")
-            heleket_api_key = database.get_setting("heleket_api_key")
-            heleket_enabled = bool(heleket_api_key and heleket_shop_id)
+            current_methods = handlers.get_current_payment_methods()
+            if current_methods.get("yookassa"):
+                Configuration.account_id = database.get_setting("yookassa_shop_id")
+                Configuration.secret_key = database.get_setting("yookassa_secret_key")
             
-            ton_wallet_address = database.get_setting("ton_wallet_address")
-            tonapi_key = database.get_setting("tonapi_key")
-            tonconnect_enabled = bool(ton_wallet_address and tonapi_key)
-
-            # Telegram Stars (оплата в звёздах) — включается флагом в настройках
-            stars_flag = database.get_setting("stars_enabled")
-            stars_enabled = str(stars_flag).lower() in ("true", "1", "yes", "on")
-            # YooMoney (отдельная платёжка)
-            ym_flag = database.get_setting("yoomoney_enabled")
-            ym_wallet = database.get_setting("yoomoney_wallet")
-            yoomoney_enabled = (str(ym_flag).lower() in ("true", "1", "yes", "on")) and bool(ym_wallet)
-
-            # Aaio
-            aaio_flag = database.get_setting("aaio_enabled")
-            aaio_merchant = database.get_setting("aaio_merchant_id")
-            aaio_secret1 = database.get_setting("aaio_secret_1")
-            aaio_secret2 = database.get_setting("aaio_secret_2")
-            aaio_enabled = (str(aaio_flag).lower() in ("true", "1", "yes", "on")) and bool(aaio_merchant and aaio_secret1 and aaio_secret2)
-
-            # Cryptomus
-            cryptomus_flag = database.get_setting("cryptomus_enabled")
-            cryptomus_merchant = database.get_setting("cryptomus_merchant_id")
-            cryptomus_key = database.get_setting("cryptomus_api_key")
-            cryptomus_enabled = (str(cryptomus_flag).lower() in ("true", "1", "yes", "on")) and bool(cryptomus_merchant and cryptomus_key)
-
-            # Lava.top
-            from shop_bot.modules.lavatop_payment import is_lavatop_enabled
-            lavatop_enabled = is_lavatop_enabled()
-
-            # Platega.io
-            from shop_bot.modules.platega_payment import is_platega_enabled
-            platega_enabled = is_platega_enabled()
-
-            if yookassa_enabled:
-                Configuration.account_id = yookassa_shop_id
-                Configuration.secret_key = yookassa_secret_key
-            
-            handlers.PAYMENT_METHODS = {
-                "yookassa": yookassa_enabled,
-                "heleket": heleket_enabled,
-                "cryptobot": cryptobot_enabled,
-                "tonconnect": tonconnect_enabled,
-                "stars": stars_enabled,
-                "yoomoney": yoomoney_enabled,
-                "aaio": aaio_enabled,
-                "cryptomus": cryptomus_enabled,
-                "lavatop": lavatop_enabled,
-                "platega": platega_enabled,
-            }
+            handlers.PAYMENT_METHODS = current_methods
             handlers.TELEGRAM_BOT_USERNAME = bot_username
             handlers.ADMIN_ID = admin_id
 

@@ -1,9 +1,6 @@
 from typing import Optional, Tuple
 from app.services.payments.lavatop import LavaTopService
-try:
-    from src.shop_bot.data_manager.database import get_setting
-except ImportError:
-    from shop_bot.data_manager.database import get_setting
+from shop_bot.data_manager.database import get_setting
 
 def get_lavatop_service() -> LavaTopService:
     api_key = get_setting("lavatop_api_key", "")

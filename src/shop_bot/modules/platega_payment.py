@@ -1,9 +1,6 @@
 from typing import Optional, Tuple
 from app.services.payments.platega import PlategaService
-try:
-    from src.shop_bot.data_manager.database import get_setting
-except ImportError:
-    from shop_bot.data_manager.database import get_setting
+from shop_bot.data_manager.database import get_setting
 
 def get_platega_service() -> PlategaService:
     merchant_id = get_setting("platega_merchant_id", "")

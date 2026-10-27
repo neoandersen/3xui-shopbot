@@ -79,8 +79,78 @@ from shop_bot.config import (
     get_purchase_success_text,
 )
 
+def get_current_payment_methods() -> dict:
+    from shop_bot.data_manager.database import get_setting
+    from shop_bot.modules.lavatop_payment import is_lavatop_enabled
+    from shop_bot.modules.platega_payment import is_platega_enabled
+
+    yookassa_shop_id = get_setting("yookassa_shop_id")
+    yookassa_secret_key = get_setting("yookassa_secret_key")
+    yookassa_enabled = bool(yookassa_shop_id and yookassa_secret_key)
+
+    aaio_flag = get_setting("aaio_enabled")
+    aaio_merchant = get_setting("aaio_merchant_id")
+    aaio_secret = get_setting("aaio_secret_1")
+    aaio_api = get_setting("aaio_api_key")
+    aaio_enabled = (str(aaio_flag).lower() in ("true", "1", "yes", "on")) and bool(aaio_merchant and aaio_secret and aaio_api)
+
+    cryptomus_flag = get_setting("cryptomus_enabled")
+    cryptomus_merchant = get_setting("cryptomus_merchant_id")
+    cryptomus_key = get_setting("cryptomus_api_key")
+    cryptomus_enabled = (str(cryptomus_flag).lower() in ("true", "1", "yes", "on")) and bool(cryptomus_merchant and cryptomus_key)
+
+    tonconnect_flag = get_setting("tonconnect_enabled")
+    if tonconnect_flag is not None:
+        tonconnect_enabled = str(tonconnect_flag).lower() in ("true", "1", "yes")
+    else:
+        tonconnect_enabled = bool(get_setting("ton_wallet_address") and get_setting("tonapi_key"))
+
+    return {
+        "yookassa": yookassa_enabled,
+        "heleket": bool(get_setting("heleket_merchant_id") and get_setting("heleket_api_key")),
+        "cryptobot": bool(get_setting("cryptobot_token")),
+        "tonconnect": tonconnect_enabled,
+        "stars": str(get_setting("stars_enabled", "false")).lower() in ("true", "1", "yes"),
+        "yoomoney": str(get_setting("yoomoney_enabled", "false")).lower() in ("true", "1", "yes"),
+        "aaio": aaio_enabled,
+        "cryptomus": cryptomus_enabled,
+        "lavatop": is_lavatop_enabled(),
+        "platega": is_platega_enabled(),
+    }
+
+
+class _DynamicPaymentMethods(dict):
+    """Динамический словарь для обратной совместимости с обращением к handlers.PAYMENT_METHODS"""
+    def __getitem__(self, key):
+        return get_current_payment_methods().get(key, False)
+
+    def get(self, key, default=None):
+        return get_current_payment_methods().get(key, default)
+
+    def items(self):
+        return get_current_payment_methods().items()
+
+    def values(self):
+        return get_current_payment_methods().values()
+
+    def keys(self):
+        return get_current_payment_methods().keys()
+
+    def __iter__(self):
+        return iter(get_current_payment_methods())
+
+    def __len__(self):
+        return len(get_current_payment_methods())
+
+    def __bool__(self):
+        return any(get_current_payment_methods().values())
+
+    def __contains__(self, key):
+        return key in get_current_payment_methods()
+
+
 TELEGRAM_BOT_USERNAME = get_setting("telegram_bot_username")
-PAYMENT_METHODS: dict = {}
+PAYMENT_METHODS: dict = _DynamicPaymentMethods()
 ADMIN_ID = int(get_setting("admin_id")) if get_setting("admin_id") else None
 CRYPTO_BOT_TOKEN = get_setting("cryptobot_token")
 
@@ -620,7 +690,7 @@ def get_user_router() -> Router:
         await state.update_data(topup_amount=float(final_amount))
         await message.answer(
             f"К пополнению: ${final_amount:.2f} USD\nВыберите способ оплаты:",
-            reply_markup=keyboards.create_topup_payment_method_keyboard(PAYMENT_METHODS)
+            reply_markup=keyboards.create_topup_payment_method_keyboard(get_current_payment_methods())
         )
         await state.set_state(TopUpProcess.waiting_for_topup_method)
 
@@ -2404,7 +2474,7 @@ def get_user_router() -> Router:
         show_balance_btn = main_balance >= float(final_price)
 
         keyboard = keyboards.create_payment_method_keyboard(
-            payment_methods=PAYMENT_METHODS,
+            payment_methods=get_current_payment_methods(),
             action=data.get('action'),
             key_id=data.get('key_id'),
             show_balance=show_balance_btn,
