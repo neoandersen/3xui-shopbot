@@ -815,6 +815,96 @@
             </div>
             <div class="form-text text-secondary mb-3">Вебхук URL для указания в кабинете Cryptomus: <code>https://auth.neo-vpn.click:8443/webhook/cryptomus</code>. Поддерживаются: USDT, USDC, BTC, ETH, XRP, XMR, LTC, TON.</div>
 
+            <h3 class="h4 mt-4">Настройка PayOK (Банковские карты, СБП, P2P без ИП)</h3>
+            <div class="mb-3">
+              <input type="hidden" name="payok_enabled" value="false" />
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="payok_enabled" name="payok_enabled" value="true" {% if settings.payok_enabled == 'true' %}checked{% endif %}>
+                <label class="form-check-label" for="payok_enabled">Включить оплату через PayOK</label>
+              </div>
+            </div>
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                <label class="form-label" for="payok_shop_id">PayOK Shop ID</label>
+                <input class="form-control" type="text" id="payok_shop_id" name="payok_shop_id" value="{{ settings.payok_shop_id or '' }}" placeholder="ID магазина (число)" />
+              </div>
+              <div class="col-md-6 mb-3">
+                <label class="form-label" for="payok_api_id">PayOK API ID (Опционально)</label>
+                <input class="form-control" type="text" id="payok_api_id" name="payok_api_id" value="{{ settings.payok_api_id or '' }}" placeholder="ID API ключа" />
+              </div>
+            </div>
+            <div class="mb-3 password-wrapper">
+              <label class="form-label" for="payok_api_key">PayOK API Key (Опционально)</label>
+              <div class="d-flex gap-2">
+                <input class="form-control" type="password" id="payok_api_key" name="payok_api_key" value="{{ settings.payok_api_key or '' }}" />
+                <button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+              </div>
+            </div>
+            <div class="mb-3 password-wrapper">
+              <label class="form-label" for="payok_secret_key">PayOK Secret Key</label>
+              <div class="d-flex gap-2">
+                <input class="form-control" type="password" id="payok_secret_key" name="payok_secret_key" value="{{ settings.payok_secret_key or '' }}" />
+                <button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="payok_currency">Валюта счетов PayOK</label>
+              <select class="form-select" id="payok_currency" name="payok_currency">
+                <option value="RUB" {% if settings.payok_currency == 'RUB' or not settings.payok_currency %}selected{% endif %}>RUB (Российский рубль)</option>
+                <option value="USD" {% if settings.payok_currency == 'USD' %}selected{% endif %}>USD (Доллар США)</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">URL вебхука для PayOK</label>
+              <div class="input-group">
+                <input type="text" class="form-control font-monospace" id="payok_webhook_url" value="https://{{ request.host }}/webhook/payok" readonly />
+                <button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('payok_webhook_url').value); alert('URL вебхука PayOK скопирован!');">📋 Копировать</button>
+              </div>
+              <div class="form-text text-secondary">Укажите этот адрес в личном кабинете PayOK в настройках вашего магазина.</div>
+            </div>
+
+            <h3 class="h4 mt-4">Настройка Lava.top (Карты РФ, зарубежные карты, СБП)</h3>
+            <div class="mb-3">
+              <input type="hidden" name="lavatop_enabled" value="false" />
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="lavatop_enabled" name="lavatop_enabled" value="true" {% if settings.lavatop_enabled == 'true' %}checked{% endif %}>
+                <label class="form-check-label" for="lavatop_enabled">Включить оплату через Lava.top</label>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="lavatop_offer_id">Lava.top Offer ID</label>
+              <input class="form-control" type="text" id="lavatop_offer_id" name="lavatop_offer_id" value="{{ settings.lavatop_offer_id or '' }}" placeholder="ID продукта/оффера в кабинете Lava.top" />
+            </div>
+            <div class="mb-3 password-wrapper">
+              <label class="form-label" for="lavatop_api_key">Lava.top API Key</label>
+              <div class="d-flex gap-2">
+                <input class="form-control" type="password" id="lavatop_api_key" name="lavatop_api_key" value="{{ settings.lavatop_api_key or '' }}" />
+                <button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+              </div>
+            </div>
+            <div class="mb-3 password-wrapper">
+              <label class="form-label" for="lavatop_webhook_key">Lava.top Webhook Secret Key</label>
+              <div class="d-flex gap-2">
+                <input class="form-control" type="password" id="lavatop_webhook_key" name="lavatop_webhook_key" value="{{ settings.lavatop_webhook_key or '' }}" />
+                <button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="lavatop_currency">Валюта счетов Lava.top</label>
+              <select class="form-select" id="lavatop_currency" name="lavatop_currency">
+                <option value="RUB" {% if settings.lavatop_currency == 'RUB' or not settings.lavatop_currency %}selected{% endif %}>RUB (Российский рубль)</option>
+                <option value="USD" {% if settings.lavatop_currency == 'USD' %}selected{% endif %}>USD (Доллар США)</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">URL вебхука для Lava.top</label>
+              <div class="input-group">
+                <input type="text" class="form-control font-monospace" id="lavatop_webhook_url" value="https://{{ request.host }}/webhook/lavatop" readonly />
+                <button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('lavatop_webhook_url').value); alert('URL вебхука Lava.top скопирован!');">📋 Копировать</button>
+              </div>
+              <div class="form-text text-secondary">Укажите этот адрес в личном кабинете Lava.top в настройках вебхуков проекта.</div>
+            </div>
+
             <h3 class="h4 mt-4">Валютное ядро (База USD + 24h Кэш)</h3>
             <div class="mb-3">
               <label class="form-label" for="base_currency">Базовая системная валюта</label>

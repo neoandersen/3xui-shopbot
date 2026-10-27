@@ -13,5 +13,16 @@
   "trial_enabled": true,
   "trial_duration_days": 3,
   "panel_login": "admin",
-  "panel_password": "admin"
+  "panel_password": "admin",
+  "payok_enabled": false,
+  "payok_api_id": "",
+  "payok_api_key": "",
+  "payok_shop_id": "",
+  "payok_secret_key": "",
+  "payok_currency": "RUB",
+  "lavatop_enabled": false,
+  "lavatop_api_key": "",
+  "lavatop_offer_id": "",
+  "lavatop_webhook_key": "",
+  "lavatop_currency": "RUB"
 }

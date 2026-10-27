@@ -696,6 +696,10 @@ def create_payment_method_keyboard(
         builder.button(text="💳 Карты (UAH/RUB/KZT, World) / СБП — Aaio", callback_data="pay_aaio")
     if payment_methods and payment_methods.get("cryptomus"):
         builder.button(text="🌐 Мультивалютная крипта (USDT, BTC...) — Cryptomus", callback_data="pay_cryptomus")
+    if payment_methods and payment_methods.get("payok"):
+        builder.button(text="💳 Банковская карта / СБП (PayOK)", callback_data="pay_payok")
+    if payment_methods and payment_methods.get("lavatop"):
+        builder.button(text="⚡ Карты и СБП (Lava.top)", callback_data="pay_lavatop")
     if payment_methods and payment_methods.get("yookassa"):
         if get_setting("sbp_enabled"):
             builder.button(text="🏦 СБП / Банковская карта", callback_data="pay_yookassa")
@@ -848,6 +852,18 @@ def create_payment_with_check_keyboard(payment_url: str, check_callback: str) ->
     builder.adjust(1)
     return builder.as_markup()
 
+def create_invoice_payment_keyboard(
+    payment_url: str,
+    check_callback: str,
+    cancel_callback: str = "cancel_payment"
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔗 Оплатить заказ", url=payment_url)
+    builder.button(text="🔄 Проверить оплату", callback_data=check_callback)
+    builder.button(text="❌ Отмена", callback_data=cancel_callback)
+    builder.adjust(1)
+    return builder.as_markup()
+
 def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     # Только внешние способы оплаты, без оплаты с баланса
@@ -855,6 +871,10 @@ def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboar
         builder.button(text="💳 Карты (UAH/RUB/KZT, World) / СБП — Aaio", callback_data="topup_pay_aaio")
     if payment_methods and payment_methods.get("cryptomus"):
         builder.button(text="🌐 Мультивалютная крипта (USDT, BTC...) — Cryptomus", callback_data="topup_pay_cryptomus")
+    if payment_methods and payment_methods.get("payok"):
+        builder.button(text="💳 Банковская карта / СБП (PayOK)", callback_data="topup_pay_payok")
+    if payment_methods and payment_methods.get("lavatop"):
+        builder.button(text="⚡ Карты и СБП (Lava.top)", callback_data="topup_pay_lavatop")
     if payment_methods and payment_methods.get("yookassa"):
         if get_setting("sbp_enabled"):
             builder.button(text="🏦 СБП / Банковская карта", callback_data="topup_pay_yookassa")

@@ -388,6 +388,19 @@ def initialize_db():
                 "cryptomus_enabled": "false",
                 "cryptomus_merchant_id": None,
                 "cryptomus_api_key": None,
+                # PayOK payments (cards, SBP, P2P)
+                "payok_enabled": "false",
+                "payok_api_id": None,
+                "payok_api_key": None,
+                "payok_shop_id": None,
+                "payok_secret_key": None,
+                "payok_currency": "RUB",
+                # Lava.top payments (cards RF/World, SBP)
+                "lavatop_enabled": "false",
+                "lavatop_api_key": None,
+                "lavatop_offer_id": None,
+                "lavatop_webhook_key": None,
+                "lavatop_currency": "RUB",
                 # Base currency settings
                 "base_currency": "USD",
                 "max_keys": "50",
@@ -498,6 +511,13 @@ def initialize_db():
                     cursor.execute("ALTER TABLE transactions ADD COLUMN provider TEXT")
                 if 'provider_payment_id' not in tx_cols:
                     cursor.execute("ALTER TABLE transactions ADD COLUMN provider_payment_id TEXT")
+                # v1.4.0: PayOK & Lava.top fields
+                if 'external_invoice_id' not in tx_cols:
+                    cursor.execute("ALTER TABLE transactions ADD COLUMN external_invoice_id TEXT")
+                if 'pay_currency' not in tx_cols:
+                    cursor.execute("ALTER TABLE transactions ADD COLUMN pay_currency TEXT")
+                if 'exchange_rate_used' not in tx_cols:
+                    cursor.execute("ALTER TABLE transactions ADD COLUMN exchange_rate_used REAL")
                 conn.commit()
             except Exception as e:
                 logging.warning(f"Ошибка при миграции transactions: {e}")
@@ -2315,14 +2335,17 @@ def create_pending_transaction(
     exchange_rate: float | None = None,
     currency_name: str | None = None,
     amount_currency: float | None = None,
+    external_invoice_id: str | None = None,
+    pay_currency: str | None = None,
+    exchange_rate_used: float | None = None,
 ) -> int:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """INSERT INTO transactions
-                   (payment_id, user_id, status, amount_rub, metadata, provider, provider_payment_id, amount_usd, exchange_rate, currency_name, amount_currency)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (payment_id, user_id, status, amount_rub, metadata, provider, provider_payment_id, amount_usd, exchange_rate, currency_name, amount_currency, external_invoice_id, pay_currency, exchange_rate_used)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     payment_id,
                     user_id,
@@ -2334,7 +2357,10 @@ def create_pending_transaction(
                     amount_usd if amount_usd is not None else amount_rub,
                     exchange_rate,
                     currency_name,
-                    amount_currency
+                    amount_currency,
+                    external_invoice_id or provider_payment_id,
+                    pay_currency or currency_name,
+                    exchange_rate_used or exchange_rate
                 )
             )
             conn.commit()
