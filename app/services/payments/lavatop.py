@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import logging
 from typing import Any, Dict, Optional, Tuple
 import aiohttp
@@ -35,7 +36,7 @@ class LavaTopService:
             logger.error("Lava.top не настроен: отсутствует api_key или offer_id")
             return False, None, None
 
-        endpoint = f"{LAVA_API_BASE_URL}/api/v1/invoices"
+        endpoint = f"{LAVA_API_BASE_URL}/api/v1/invoice"
         headers = {
             "X-Api-Key": self.api_key,
             "Content-Type": "application/json",
@@ -54,14 +55,19 @@ class LavaTopService:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(endpoint, json=payload, headers=headers, timeout=15) as resp:
-                    resp_json = await resp.json()
+                    raw_text = await resp.text()
+                    try:
+                        resp_json = json.loads(raw_text)
+                    except Exception:
+                        resp_json = {}
+
                     if resp.status in (200, 201):
                         data = resp_json.get("data", resp_json)
                         payment_url = data.get("paymentUrl") or data.get("url")
                         invoice_id = str(data.get("id") or data.get("invoiceId") or "")
                         return True, payment_url, invoice_id
                     
-                    logger.error(f"Lava.top API error [{resp.status}]: {resp_json}")
+                    logger.error(f"Lava.top API error [{resp.status}]: {raw_text or resp_json}")
                     return False, None, None
         except Exception as e:
             logger.exception(f"Исключение при вызове Lava.top create_invoice: {e}")
@@ -71,7 +77,7 @@ class LavaTopService:
         if not self.api_key or not invoice_id:
             return None
 
-        endpoint = f"{LAVA_API_BASE_URL}/api/v1/invoices/{invoice_id}"
+        endpoint = f"{LAVA_API_BASE_URL}/api/v1/invoice/{invoice_id}"
         headers = {
             "X-Api-Key": self.api_key,
             "Accept": "application/json"
@@ -80,7 +86,11 @@ class LavaTopService:
             async with aiohttp.ClientSession() as session:
                 async with session.get(endpoint, headers=headers, timeout=10) as resp:
                     if resp.status == 200:
-                        data = await resp.json()
+                        raw_text = await resp.text()
+                        try:
+                            data = json.loads(raw_text)
+                        except Exception:
+                            data = {}
                         invoice_data = data.get("data", data)
                         return invoice_data.get("status")
                     return None

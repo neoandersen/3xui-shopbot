@@ -1,4 +1,5 @@
 import hmac
+import json
 import logging
 from typing import Any, Dict, Optional, Tuple
 import aiohttp
@@ -57,13 +58,18 @@ class PlategaService:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(PLATEGA_API_URL, json=payload, headers=headers, timeout=15) as resp:
-                    resp_json = await resp.json()
+                    raw_text = await resp.text()
+                    try:
+                        resp_json = json.loads(raw_text)
+                    except Exception:
+                        resp_json = {}
+
                     if resp.status in (200, 201):
                         payment_url = resp_json.get("paymentUrl") or resp_json.get("url")
                         tx_id = str(resp_json.get("id") or resp_json.get("transactionId") or "")
                         return True, payment_url, tx_id
                     
-                    logger.error(f"Platega.io API error [{resp.status}]: {resp_json}")
+                    logger.error(f"Platega.io API error [{resp.status}]: {raw_text or resp_json}")
                     return False, None, None
         except Exception as e:
             logger.exception(f"Исключение при вызове Platega create_payment: {e}")
