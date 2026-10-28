@@ -323,3 +323,46 @@
   - В карточке ключа добавлена кнопка `[ ✏️ Переименовать ]`.
   - Состояние `KeyRename.waiting_for_key_name` с функцией `rename_user_key(key_id, user_id, new_name)`, строго проверяющей владельца на уровне SQL: `WHERE id = :key_id AND user_id = :telegram_id`.
 
+## 12. Модуль безопасности: Nginx Overflow Shield & Network Hardening
+
+### 12.1. Сервис аудита и применения параметров (`NginxHardeningService`)
+- **Расположение**: `src/shop_bot/services/nginx_hardening_service.py`
+- **Аудит конфигурации Nginx**:
+  - `server_tokens off;` — сокрытие версии Nginx в ответах и страницах ошибок.
+  - `client_header_buffer_size 1k;` и `large_client_header_buffers 4 8k;` — ограничение заголовков до 8 КБ (отсечение атак Buffer Overflow через URI/Cookie с кодом HTTP 414/400).
+  - `client_body_buffer_size 16k;` и `client_max_body_size 10m;` — предотвращение переполнения оперативной памяти воркеров телом запроса.
+  - Защитные таймауты против Slowloris: `client_header_timeout 10s;`, `client_body_timeout 10s;`, `send_timeout 10s;`, `keepalive_timeout 30s;`, `reset_timedout_connection on;`.
+  - Зоны лимитов соединений и запросов: `limit_conn_zone $binary_remote_addr zone=addr_limit:10m;`, `limit_req_zone $limit_req_exempt_key zone=req_limit:10m rate=15r/s;`.
+- **White-list для платёжных шлюзов**:
+  - Настроена директива `map $request_uri $limit_req_exempt_key`, возвращающая пустую строку `""` для путей `/webhook/*`, `/payok-webhook`, `/lavatop-webhook`, `/cryptomus-webhook`, `/yookassa-webhook`, `/aaio-webhook`, `/platega-webhook`.
+  - По спецификации Nginx пустой ключ исключает запрос из лимитирования, гарантируя 100% надёжную доставку платёжных коллбэков при пиковых нагрузках.
+- **Fail-Safe Engine с автоматическим откатом**:
+  - Перед наложением директив создается временной бэкап `security_hardening.conf.bak_<timestamp>`.
+  - Атомарная запись через `.tmp` в `/etc/nginx/conf.d/security_hardening.conf`.
+  - Валидация синтаксиса через `nginx -t`.
+  - При успехе — мягкий `nginx -s reload` без разрыва активных соединений.
+  - При синтаксической ошибке — немедленный автоматический откат к бэкапу и запись лога ошибки.
+
+### 12.2. Защита сетевого стека ядра Linux (Sysctl)
+- Контроль и применение параметров в `/etc/sysctl.d/99-neovpn-security.conf`:
+  - `net.ipv4.tcp_syncookies = 1` — отражение SYN-flood атак.
+  - `net.core.somaxconn = 4096` — расширение очереди прослушиваемых сокетов против переполнения.
+  - `net.ipv4.tcp_max_syn_backlog = 4096` — увеличение очереди полуоткрытых TCP-соединений.
+  - `net.ipv4.tcp_fin_timeout = 15` — ускоренное закрытие неактивных сокетов FIN-WAIT-2.
+
+### 12.3. Экспресс-парсер аномалий (Log Parser)
+- Мониторинг `access.log` и `error.log` Nginx за 24 часа.
+- Детекция попыток эксплойта буферов и некорректных запросов:
+  - `414` (URI Too Large)
+  - `400` / `494` (Bad Request / Header Too Large)
+  - `413` (Payload Too Large)
+  - Падения воркеров Nginx (`worker process ... exited on signal / died`).
+
+### 12.4. Расширение API и Веб-интерфейс
+- **API эндпоинты** (`src/shop_bot/modules/enhanced_admin_routes.py`):
+  - `GET /api/security/nginx` (алиас `/admin/api/security/nginx`) — статус харденинга, директив, sysctl и счётчик аномалий.
+  - `POST /api/security/nginx/apply` (алиас `/admin/api/security/nginx/apply`) — безопасное применение Nginx Overflow Shield.
+  - `POST /api/security/sysctl/apply` (алиас `/admin/api/security/sysctl/apply`) — наложение сетевых параметров ядра.
+- **UI карточка в `security.html`**:
+  - «Защита от переполнения буферов (Nginx & Network Shield)» с динамическими индикаторами статуса, счётчиками 414/400/413 за 24ч, интерактивными кнопками наложения с подтверждением и терминальным блоком лога проверки `nginx -t`.
+

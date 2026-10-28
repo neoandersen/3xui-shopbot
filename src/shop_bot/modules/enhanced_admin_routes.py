@@ -8,9 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 from shop_bot.data_manager import database
+from shop_bot.services.nginx_hardening_service import NginxHardeningService
 
 logger = logging.getLogger(__name__)
 
@@ -248,9 +249,11 @@ def register_enhanced_admin_routes(
     def security_dashboard_page():
         audit_data = load_security_audit_data()
         common_data = get_common_template_data()
+        nginx_status = NginxHardeningService.get_complete_status()
         return render_template(
             "admin/security.html",
             audit_data=audit_data,
+            nginx_status=nginx_status,
             **common_data,
         )
 
@@ -273,3 +276,47 @@ def register_enhanced_admin_routes(
     def security_status_api_route():
         audit_data = load_security_audit_data()
         return jsonify({"ok": True, "data": audit_data})
+
+    @app.route("/api/security/nginx", methods=["GET"])
+    @app.route("/admin/api/security/nginx", methods=["GET"])
+    @login_required
+    def get_security_nginx_route():
+        if not session.get("logged_in"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        status = NginxHardeningService.get_complete_status()
+        return jsonify(status)
+
+    @app.route("/api/security/nginx/apply", methods=["POST"])
+    @app.route("/admin/api/security/nginx/apply", methods=["POST"])
+    @login_required
+    def apply_security_nginx_route():
+        if not session.get("logged_in"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        success, message, audit_data = NginxHardeningService.apply_nginx_hardening()
+        return jsonify(
+            {
+                "ok": success,
+                "success": success,
+                "message": message,
+                "output": message,
+                "audit_data": audit_data,
+                "rollback": not success,
+            }
+        ), (200 if success else 500)
+
+    @app.route("/api/security/sysctl/apply", methods=["POST"])
+    @app.route("/admin/api/security/sysctl/apply", methods=["POST"])
+    @login_required
+    def apply_security_sysctl_route():
+        if not session.get("logged_in"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        success, message, audit_data = NginxHardeningService.apply_sysctl_hardening()
+        return jsonify(
+            {
+                "ok": success,
+                "success": success,
+                "message": message,
+                "output": message,
+                "audit_data": audit_data,
+            }
+        ), (200 if success else 500)

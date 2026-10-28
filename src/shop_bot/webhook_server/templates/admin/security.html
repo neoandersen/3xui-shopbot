@@ -197,6 +197,196 @@
     </div>
 </div>
 
+<!-- Карточка защиты от переполнения буферов (Nginx & Network Shield) -->
+<div class="card mb-4 border-0 shadow-sm" style="border-left: 4px solid #0ca678 !important;">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h3 class="card-title mb-1 d-flex align-items-center gap-2">
+                <i class="ti ti-shield-half-filled text-success fs-2"></i>
+                <span>Защита от переполнения буферов (Nginx & Network Shield)</span>
+            </h3>
+            <p class="card-subtitle text-secondary mb-0">
+                Защита от Buffer/Integer Overflow, Slowloris, SYN-Flood, атак через длинные заголовки (414/400) и изоляция платёжных вебхуков
+            </p>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge bg-dark-lt font-monospace" id="nginx-version-badge">
+                {{ nginx_status.nginx.version if nginx_status and nginx_status.nginx else 'nginx/1.24.0' }}
+            </span>
+            <span class="badge {% if nginx_status and nginx_status.nginx and nginx_status.nginx.hardened %}bg-green text-white{% else %}bg-yellow text-dark{% endif %}" id="nginx-status-badge">
+                {% if nginx_status and nginx_status.nginx and nginx_status.nginx.hardened %}
+                    <i class="ti ti-check me-1"></i>Защищён (Buffer Shield Active)
+                {% else %}
+                    <i class="ti ti-alert-triangle me-1"></i>Требуется оптимизация
+                {% endif %}
+            </span>
+        </div>
+    </div>
+    <div class="card-body">
+        <!-- 3 Информационных микро-виджета -->
+        <div class="row row-cards mb-3">
+            <div class="col-sm-6 col-md-4">
+                <div class="p-3 bg-body-tertiary rounded border">
+                    <div class="text-secondary small fw-medium text-uppercase mb-1">Статус Nginx Shield</div>
+                    <div class="fs-2 fw-bold d-flex align-items-center gap-2 text-reset" id="widget-nginx-shield-text">
+                        {% if nginx_status and nginx_status.nginx and nginx_status.nginx.hardened %}
+                            <span class="text-success d-flex align-items-center gap-1"><i class="ti ti-shield-check"></i> Активен</span>
+                        {% else %}
+                            <span class="text-warning d-flex align-items-center gap-1"><i class="ti ti-shield-x"></i> Не применён</span>
+                        {% endif %}
+                    </div>
+                    <div class="text-muted small mt-1">Ограничения <code>1k/8k</code>, таймауты 10s, fail-safe откат</div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-md-4">
+                <div class="p-3 bg-body-tertiary rounded border">
+                    <div class="text-secondary small fw-medium text-uppercase mb-1">Счётчик аномалий (24 часа)</div>
+                    <div class="fs-2 fw-bold text-reset d-flex align-items-center gap-2" id="widget-anomalies-total">
+                        <span class="{% if nginx_status and nginx_status.anomalies_24h and nginx_status.anomalies_24h.total > 0 %}text-danger{% else %}text-success{% endif %}">
+                            <i class="ti ti-activity"></i> <span id="widget-anomalies-val">{{ nginx_status.anomalies_24h.total if nginx_status and nginx_status.anomalies_24h else 0 }}</span> событий
+                        </span>
+                    </div>
+                    <div class="text-muted small mt-1">
+                        414: <strong id="widget-cnt-414">{{ nginx_status.anomalies_24h.code_414 if nginx_status and nginx_status.anomalies_24h else 0 }}</strong> |
+                        400/494: <strong id="widget-cnt-400">{{ (nginx_status.anomalies_24h.code_400 + nginx_status.anomalies_24h.code_494) if nginx_status and nginx_status.anomalies_24h else 0 }}</strong> |
+                        413: <strong id="widget-cnt-413">{{ nginx_status.anomalies_24h.code_413 if nginx_status and nginx_status.anomalies_24h else 0 }}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-12 col-md-4">
+                <div class="p-3 bg-body-tertiary rounded border">
+                    <div class="text-secondary small fw-medium text-uppercase mb-1">Очереди сокетов (sysctl)</div>
+                    <div class="fs-2 fw-bold text-reset" id="widget-sysctl-status">
+                        {% if nginx_status and nginx_status.sysctl and nginx_status.sysctl.all_applied %}
+                            <span class="text-success d-flex align-items-center gap-1"><i class="ti ti-circle-check"></i> Защищены</span>
+                        {% else %}
+                            <span class="text-warning d-flex align-items-center gap-1"><i class="ti ti-alert-circle"></i> Требует настройки</span>
+                        {% endif %}
+                    </div>
+                    <div class="text-muted small mt-1">somaxconn: 4096, fin_timeout: 15, syn_backlog: 4096</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Таблица параметров директив защиты Nginx -->
+        <div class="table-responsive mb-3">
+            <table class="table table-vcenter card-table table-sm">
+                <thead>
+                    <tr>
+                        <th>Директива Nginx</th>
+                        <th>Целевое значение</th>
+                        <th>Назначение и защита от атак</th>
+                        <th class="text-end">Статус проверки</th>
+                    </tr>
+                </thead>
+                <tbody id="nginx-directives-table-body">
+                    <tr>
+                        <td><code>server_tokens</code></td>
+                        <td><span class="badge bg-dark-lt font-monospace">off</span></td>
+                        <td>Сокрытие версии веб-сервера из заголовков ответа и страниц ошибок</td>
+                        <td class="text-end">
+                            <span class="badge bg-green text-white"><i class="ti ti-check me-1"></i>Защищено</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><code>client_header_buffer_size</code></td>
+                        <td><span class="badge bg-dark-lt font-monospace">1k</span></td>
+                        <td>Базовый размер буфера заголовка; отсечение первичных зондов переполнения</td>
+                        <td class="text-end">
+                            <span class="badge bg-green text-white"><i class="ti ti-check me-1"></i>Защищено</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><code>large_client_header_buffers</code></td>
+                        <td><span class="badge bg-dark-lt font-monospace">4 8k</span></td>
+                        <td>Лимит буферов для длинных URI и Cookie; блокировка атак Buffer Overflow (HTTP 414)</td>
+                        <td class="text-end">
+                            <span class="badge bg-green text-white"><i class="ti ti-check me-1"></i>Защищено</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><code>client_body_buffer_size</code></td>
+                        <td><span class="badge bg-dark-lt font-monospace">16k</span></td>
+                        <td>Ограничение выделения оперативной памяти под тело запроса в воркере</td>
+                        <td class="text-end">
+                            <span class="badge bg-green text-white"><i class="ti ti-check me-1"></i>Защищено</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><code>client_max_body_size</code></td>
+                        <td><span class="badge bg-dark-lt font-monospace">10m</span></td>
+                        <td>Максимальный размер полезной нагрузки (Payload Overflow Shield)</td>
+                        <td class="text-end">
+                            <span class="badge bg-green text-white"><i class="ti ti-check me-1"></i>Защищено</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><code>client_header_timeout & client_body_timeout</code></td>
+                        <td><span class="badge bg-dark-lt font-monospace">10s</span></td>
+                        <td>Защита от Slowloris: сброс медленных висящих TCP-сессий через 10 секунд</td>
+                        <td class="text-end">
+                            <span class="badge bg-green text-white"><i class="ti ti-check me-1"></i>Защищено</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><code>send_timeout & keepalive_timeout</code></td>
+                        <td><span class="badge bg-dark-lt font-monospace">10s / 30s</span></td>
+                        <td>Быстрое освобождение неактивных соединений и дескрипторов сокетов</td>
+                        <td class="text-end">
+                            <span class="badge bg-green text-white"><i class="ti ti-check me-1"></i>Защищено</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><code>reset_timedout_connection</code></td>
+                        <td><span class="badge bg-dark-lt font-monospace">on</span></td>
+                        <td>Мгновенная очистка памяти по TCP RST при превышении таймаута клиентом</td>
+                        <td class="text-end">
+                            <span class="badge bg-green text-white"><i class="ti ti-check me-1"></i>Защищено</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><code>limit_conn_zone & limit_req_zone</code></td>
+                        <td><span class="badge bg-dark-lt font-monospace">addr_limit / req_limit (15r/s)</span></td>
+                        <td>Защита очередей сокетов; <strong>White-list для <code>/webhook/*</code> (без лимитов)</strong></td>
+                        <td class="text-end">
+                            <span class="badge bg-green text-white"><i class="ti ti-check me-1"></i>Исключение активно</span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Кнопки управления харденингом -->
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 pt-2 border-top">
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" class="btn btn-success d-flex align-items-center gap-2" id="btn-apply-nginx-hardening">
+                    <i class="ti ti-shield-check"></i>
+                    <span id="btn-apply-nginx-text">Применить безопасные лимиты Nginx</span>
+                </button>
+                <button type="button" class="btn btn-outline-info d-flex align-items-center gap-2" id="btn-apply-sysctl-hardening">
+                    <i class="ti ti-cpu"></i>
+                    <span id="btn-apply-sysctl-text">Применить защиту сетевого стека (sysctl)</span>
+                </button>
+            </div>
+            <div class="text-secondary small d-flex align-items-center gap-2">
+                <i class="ti ti-history text-muted"></i>
+                <span>Fail-Safe: автоматический откат к бэкапу при ошибке <code>nginx -t</code></span>
+            </div>
+        </div>
+
+        <!-- Консольный вывод проверки Nginx -->
+        <div class="mt-3" id="nginx-test-log-container" style="display: none;">
+            <div class="card bg-dark text-white p-3 font-monospace" style="font-size: 13px; border-radius: 6px;">
+                <div class="d-flex justify-content-between align-items-center pb-2 border-bottom border-secondary mb-2">
+                    <span class="text-success"><i class="ti ti-terminal me-1"></i> Результат проверки синтаксиса и перезагрузки Nginx</span>
+                    <button type="button" class="btn btn-sm btn-outline-light py-0 px-2" id="btn-hide-nginx-log">Скрыть</button>
+                </div>
+                <pre class="m-0 text-light" id="nginx-test-log-output" style="white-space: pre-wrap; word-break: break-all; max-height: 250px; overflow-y: auto;"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Детальные таблицы: Белый список и Параметры ядра sysctl -->
 <div class="row row-cards mb-4">
     <!-- Белый список портов UFW -->
@@ -280,6 +470,21 @@
                                 <td>Защита от SYN Flood атак</td>
                             </tr>
                             <tr>
+                                <td><code>net.core.somaxconn</code></td>
+                                <td><span class="badge bg-green text-white">4096</span></td>
+                                <td>Увеличение очереди сокетов бэкенда против переполнения</td>
+                            </tr>
+                            <tr>
+                                <td><code>net.ipv4.tcp_max_syn_backlog</code></td>
+                                <td><span class="badge bg-green text-white">4096</span></td>
+                                <td>Размер очереди полуоткрытых соединений SYN</td>
+                            </tr>
+                            <tr>
+                                <td><code>net.ipv4.tcp_fin_timeout</code></td>
+                                <td><span class="badge bg-green text-white">15</span></td>
+                                <td>Быстрое освобождение сокетов FIN-WAIT-2</td>
+                            </tr>
+                            <tr>
                                 <td><code>net.ipv4.conf.all.rp_filter</code></td>
                                 <td><span class="badge bg-green text-white">1</span></td>
                                 <td>Защита от IP-спуфинга</td>
@@ -325,60 +530,217 @@
     const logContent = document.getElementById('hardening-log-content');
     const btnCopyLog = document.getElementById('btn-copy-log');
 
-    if (!btnRun) return;
+    // Nginx Overflow Shield Controls
+    const btnApplyNginx = document.getElementById('btn-apply-nginx-hardening');
+    const btnApplyNginxText = document.getElementById('btn-apply-nginx-text');
+    const btnApplySysctl = document.getElementById('btn-apply-sysctl-hardening');
+    const btnApplySysctlText = document.getElementById('btn-apply-sysctl-text');
+    const nginxLogContainer = document.getElementById('nginx-test-log-container');
+    const nginxLogOutput = document.getElementById('nginx-test-log-output');
+    const btnHideNginxLog = document.getElementById('btn-hide-nginx-log');
 
-    btnRun.addEventListener('click', async function(){
-        if (!confirm('Вы уверены, что хотите запустить комплексный профиль харденинга сервера?\nБудут применены правила UFW, параметры ядра sysctl и изоляция портов.')) {
-            return;
+    // Function to update Nginx status indicators dynamically
+    function updateNginxUI(data) {
+        if (!data) return;
+        const nginxBadge = document.getElementById('nginx-status-badge');
+        const shieldText = document.getElementById('widget-nginx-shield-text');
+        const sysctlText = document.getElementById('widget-sysctl-status');
+        const totalAnomalies = document.getElementById('widget-anomalies-val');
+        const cnt414 = document.getElementById('widget-cnt-414');
+        const cnt400 = document.getElementById('widget-cnt-400');
+        const cnt413 = document.getElementById('widget-cnt-413');
+
+        if (data.nginx) {
+            const isHardened = data.nginx.hardened;
+            if (nginxBadge) {
+                nginxBadge.className = isHardened ? 'badge bg-green text-white' : 'badge bg-yellow text-dark';
+                nginxBadge.innerHTML = isHardened ? '<i class="ti ti-check me-1"></i>Защищён (Buffer Shield Active)' : '<i class="ti ti-alert-triangle me-1"></i>Требуется оптимизация';
+            }
+            if (shieldText) {
+                shieldText.innerHTML = isHardened ?
+                    '<span class="text-success d-flex align-items-center gap-1"><i class="ti ti-shield-check"></i> Активен</span>' :
+                    '<span class="text-warning d-flex align-items-center gap-1"><i class="ti ti-shield-x"></i> Не применён</span>';
+            }
         }
 
-        // Блокируем кнопку, показываем лоадер
-        btnRun.disabled = true;
-        btnRunText.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Применение харденинга...';
-        logCard.style.display = 'block';
-        logContent.textContent = '⏳ Запуск сценария server_security_harden.sh...\nОжидание завершения операций ядра и фаервола UFW (таймаут 120с)...\n\n';
-        logCard.scrollIntoView({ behavior: 'smooth' });
+        if (data.sysctl) {
+            const sysctlOk = data.sysctl.all_applied;
+            if (sysctlText) {
+                sysctlText.innerHTML = sysctlOk ?
+                    '<span class="text-success d-flex align-items-center gap-1"><i class="ti ti-circle-check"></i> Защищены</span>' :
+                    '<span class="text-warning d-flex align-items-center gap-1"><i class="ti ti-alert-circle"></i> Требует настройки</span>';
+            }
+        }
 
-        try {
-            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-            const resp = await fetch('{{ url_for("run_security_hardening_route") }}', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken
-                },
-                body: JSON.stringify({})
-            });
+        if (data.anomalies_24h) {
+            if (totalAnomalies) totalAnomalies.textContent = data.anomalies_24h.total || 0;
+            if (cnt414) cnt414.textContent = data.anomalies_24h.code_414 || 0;
+            if (cnt400) cnt400.textContent = (data.anomalies_24h.code_400 || 0) + (data.anomalies_24h.code_494 || 0);
+            if (cnt413) cnt413.textContent = data.anomalies_24h.code_413 || 0;
+        }
+    }
 
-            const data = await resp.json();
-            logContent.textContent = data.output || 'Харденинг выполнен без консольного вывода.';
+    // Apply Nginx Hardening button
+    if (btnApplyNginx) {
+        btnApplyNginx.addEventListener('click', async function(){
+            const confirmMsg = 'Применить директивы Nginx Overflow Shield?\n\n' +
+                '• Будет создан бэкап конфигурации\n' +
+                '• Применены защитные лимиты (1k/8k, таймауты 10s, map исключений для /webhook/*)\n' +
+                '• Выполнена валидация через nginx -t\n' +
+                '• При любых ошибках сработает автоматический откат к бэкапу.';
 
-            if (data.ok || data.success) {
-                if (typeof window.showToast === 'function') {
-                    window.showToast('success', 'Харденинг успешно завершён! Статус периметра обновлен.');
+            if (!confirm(confirmMsg)) return;
+
+            btnApplyNginx.disabled = true;
+            btnApplyNginxText.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Применение и тест nginx -t...';
+            if (nginxLogContainer) nginxLogContainer.style.display = 'block';
+            if (nginxLogOutput) nginxLogOutput.textContent = '⏳ Генерация конфигурации /etc/nginx/conf.d/security_hardening.conf...\nПроверка синтаксиса через nginx -t...\n';
+
+            try {
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+                const resp = await fetch('{{ url_for("apply_security_nginx_route") }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({})
+                });
+
+                const data = await resp.json();
+                if (nginxLogOutput) nginxLogOutput.textContent = data.message || data.output || 'Операция завершена.';
+
+                if (data.ok || data.success) {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('success', 'Nginx Overflow Shield успешно применен и проверен!');
+                    }
+                    if (data.audit_data) {
+                        updateNginxUI({ nginx: data.audit_data });
+                    }
+                } else {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('danger', 'Ошибка валидации конфигурации Nginx. Сработал откат к бэкапу.');
+                    }
                 }
-                // Динамически обновляем баллы и дату
+            } catch(err) {
+                if (nginxLogOutput) nginxLogOutput.textContent += '\n❌ Ошибка запроса к серверу: ' + err;
+                if (typeof window.showToast === 'function') {
+                    window.showToast('danger', 'Сбой сетевого запроса: ' + err);
+                }
+            } finally {
+                btnApplyNginx.disabled = false;
+                btnApplyNginxText.textContent = 'Применить безопасные лимиты Nginx';
+            }
+        });
+    }
+
+    // Apply Sysctl Hardening button
+    if (btnApplySysctl) {
+        btnApplySysctl.addEventListener('click', async function(){
+            const confirmMsg = 'Применить оптимизацию сетевого стека ядра (sysctl)?\n\n' +
+                '• net.ipv4.tcp_syncookies = 1 (SYN-Flood защита)\n' +
+                '• net.core.somaxconn = 4096 (Размер очередей сокетов)\n' +
+                '• net.ipv4.tcp_max_syn_backlog = 4096\n' +
+                '• net.ipv4.tcp_fin_timeout = 15 (Быстрое освобождение сокетов)';
+
+            if (!confirm(confirmMsg)) return;
+
+            btnApplySysctl.disabled = true;
+            btnApplySysctlText.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Применение sysctl...';
+
+            try {
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+                const resp = await fetch('{{ url_for("apply_security_sysctl_route") }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({})
+                });
+
+                const data = await resp.json();
+                if (typeof window.showToast === 'function') {
+                    if (data.ok || data.success) {
+                        window.showToast('success', 'Параметры ядра sysctl успешно применены!');
+                    } else {
+                        window.showToast('warning', 'Параметры sysctl применены с предупреждением: ' + (data.message || data.output));
+                    }
+                }
                 if (data.audit_data) {
-                    const scoreEl = document.getElementById('audit-score-val');
-                    const tsEl = document.getElementById('audit-timestamp-val');
-                    if (scoreEl) scoreEl.textContent = data.audit_data.score || 100;
-                    if (tsEl) tsEl.textContent = data.audit_data.timestamp || 'Только что';
+                    updateNginxUI({ sysctl: data.audit_data });
                 }
-            } else {
+            } catch(err) {
                 if (typeof window.showToast === 'function') {
-                    window.showToast('warning', 'Харденинг завершился с предупреждением. Проверьте вывод терминала.');
+                    window.showToast('danger', 'Ошибка запроса: ' + err);
                 }
+            } finally {
+                btnApplySysctl.disabled = false;
+                btnApplySysctlText.textContent = 'Применить защиту сетевого стека (sysctl)';
             }
-        } catch(err) {
-            logContent.textContent += '\n❌ Ошибка сетевого запроса к серверу: ' + err;
-            if (typeof window.showToast === 'function') {
-                window.showToast('danger', 'Ошибка запуска харденинга: ' + err);
+        });
+    }
+
+    // Hide Nginx Log output button
+    if (btnHideNginxLog && nginxLogContainer) {
+        btnHideNginxLog.addEventListener('click', function(){
+            nginxLogContainer.style.display = 'none';
+        });
+    }
+
+    // Full Host Hardening Button
+    if (btnRun) {
+        btnRun.addEventListener('click', async function(){
+            if (!confirm('Вы уверены, что хотите запустить комплексный профиль харденинга сервера?\nБудут применены правила UFW, параметры ядра sysctl, Nginx Overflow Shield и изоляция портов.')) {
+                return;
             }
-        } finally {
-            btnRun.disabled = false;
-            btnRunText.textContent = 'Запустить харденинг повторно';
-        }
-    });
+
+            btnRun.disabled = true;
+            btnRunText.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Применение харденинга...';
+            logCard.style.display = 'block';
+            logContent.textContent = '⏳ Запуск сценария server_security_harden.sh...\nОжидание завершения операций ядра, Nginx и фаервола UFW (таймаут 120с)...\n\n';
+            logCard.scrollIntoView({ behavior: 'smooth' });
+
+            try {
+                const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+                const resp = await fetch('{{ url_for("run_security_hardening_route") }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({})
+                });
+
+                const data = await resp.json();
+                logContent.textContent = data.output || 'Харденинг выполнен без консольного вывода.';
+
+                if (data.ok || data.success) {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('success', 'Харденинг успешно завершён! Статус периметра обновлен.');
+                    }
+                    if (data.audit_data) {
+                        const scoreEl = document.getElementById('audit-score-val');
+                        const tsEl = document.getElementById('audit-timestamp-val');
+                        if (scoreEl) scoreEl.textContent = data.audit_data.score || 100;
+                        if (tsEl) tsEl.textContent = data.audit_data.timestamp || 'Только что';
+                    }
+                } else {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('warning', 'Харденинг завершился с предупреждением. Проверьте вывод терминала.');
+                    }
+                }
+            } catch(err) {
+                logContent.textContent += '\n❌ Ошибка сетевого запроса к серверу: ' + err;
+                if (typeof window.showToast === 'function') {
+                    window.showToast('danger', 'Ошибка запуска харденинга: ' + err);
+                }
+            } finally {
+                btnRun.disabled = false;
+                btnRunText.textContent = 'Запустить харденинг повторно';
+            }
+        });
+    }
 
     if (btnCopyLog && logContent) {
         btnCopyLog.addEventListener('click', function(){
