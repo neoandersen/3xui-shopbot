@@ -233,6 +233,19 @@ if [ ! -f "$NGINX_ENABLED_FILE" ]; then
     sudo ln -s $NGINX_CONF_FILE $NGINX_ENABLED_FILE
 fi
 
+# Установка Nginx Overflow Shield (security_hardening.conf)
+NGINX_HARDENING_SRC="${PROJECT_DIR}/deploy/nginx/security_hardening.conf"
+if [ ! -f "$NGINX_HARDENING_SRC" ]; then
+    NGINX_HARDENING_SRC="${PROJECT_DIR}/src/shop_bot/config/security_hardening.conf"
+fi
+if [ -f "$NGINX_HARDENING_SRC" ]; then
+    echo -e "Установка Nginx Overflow Shield (/etc/nginx/conf.d/security_hardening.conf)..."
+    sudo mkdir -p /etc/nginx/conf.d
+    sudo cp "$NGINX_HARDENING_SRC" /etc/nginx/conf.d/security_hardening.conf
+    sudo chmod 644 /etc/nginx/conf.d/security_hardening.conf
+    echo -e "${GREEN}✔ Файл /etc/nginx/conf.d/security_hardening.conf установлен.${NC}"
+fi
+
 echo -e "${GREEN}✔ Конфигурация Nginx создана.${NC}"
 echo -e "${YELLOW}Проверяем и перезагружаем Nginx...${NC}"
 sudo nginx -t && sudo systemctl reload nginx

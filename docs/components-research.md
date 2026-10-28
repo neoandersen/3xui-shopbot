@@ -337,6 +337,8 @@
   - Настроена директива `map $request_uri $limit_req_exempt_key`, возвращающая пустую строку `""` для путей `/webhook/*`, `/payok-webhook`, `/lavatop-webhook`, `/cryptomus-webhook`, `/yookassa-webhook`, `/aaio-webhook`, `/platega-webhook`.
   - По спецификации Nginx пустой ключ исключает запрос из лимитирования, гарантируя 100% надёжную доставку платёжных коллбэков при пиковых нагрузках.
 - **Fail-Safe Engine с автоматическим откатом**:
+  - Физический статический файл конфигурации сохранён в проекте: `deploy/nginx/security_hardening.conf` и `src/shop_bot/config/security_hardening.conf`.
+  - Создан автономный скрипт развертывания `deploy/nginx/install_security_hardening.sh`.
   - Перед наложением директив создается временной бэкап `security_hardening.conf.bak_<timestamp>`.
   - Атомарная запись через `.tmp` в `/etc/nginx/conf.d/security_hardening.conf`.
   - Валидация синтаксиса через `nginx -t`.
