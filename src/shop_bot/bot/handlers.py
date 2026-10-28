@@ -508,19 +508,21 @@ def get_user_router() -> Router:
         await callback.answer()
         await show_main_menu(callback.message, edit_message=True)
 
-    @user_router.callback_query(F.data == "show_profile")
-    @registration_required
-    async def profile_handler_callback(callback: types.CallbackQuery):
-        await callback.answer()
-        user_id = callback.from_user.id
+    async def _render_user_profile(user_id: int, from_user: Optional[types.User] = None) -> Optional[tuple[str, types.InlineKeyboardMarkup]]:
         user_db_data = get_user(user_id)
-        user_keys = get_user_keys(user_id)
         if not user_db_data:
-            await callback.answer("Не удалось получить данные профиля.", show_alert=True)
-            return
+            return None
+        user_keys = get_user_keys(user_id)
         preferred_curr = get_user_preferred_currency(user_id)
-        username = html.bold(user_db_data.get('username', 'Пользователь'))
-        total_spent, total_months = user_db_data.get('total_spent', 0), user_db_data.get('total_months', 0)
+
+        raw_username = user_db_data.get('username')
+        if not raw_username and from_user:
+            raw_username = from_user.username or from_user.full_name
+        if not raw_username:
+            raw_username = "Пользователь"
+
+        total_spent = user_db_data.get('total_spent', 0)
+        total_months = user_db_data.get('total_months', 0)
         now = datetime.now()
         active_keys = [key for key in user_keys if datetime.fromisoformat(key['expiry_date']) > now]
         if active_keys:
@@ -528,9 +530,12 @@ def get_user_router() -> Router:
             latest_expiry_date = datetime.fromisoformat(latest_key['expiry_date'])
             time_left = latest_expiry_date - now
             vpn_status_text = get_vpn_active_text(time_left.days, time_left.seconds // 3600)
-        elif user_keys: vpn_status_text = VPN_INACTIVE_TEXT
-        else: vpn_status_text = VPN_NO_DATA_TEXT
-        final_text = get_profile_text(username, total_spent, total_months, vpn_status_text)
+        elif user_keys:
+            vpn_status_text = VPN_INACTIVE_TEXT
+        else:
+            vpn_status_text = VPN_NO_DATA_TEXT
+
+        final_text = get_profile_text(raw_username, total_spent, total_months, vpn_status_text, user_id=user_id)
         # Баланс: основной + реферальные метрики в валюте пользователя
         try:
             main_balance = get_balance(user_id)
@@ -552,7 +557,41 @@ def get_user_router() -> Router:
             f"\n🤝 <b>Рефералы:</b> {referral_count}"
             f"\n💰 <b>Заработано по рефералке (всего):</b> {formatted_ref}"
         )
-        await callback.message.edit_text(final_text, reply_markup=keyboards.create_profile_keyboard(preferred_currency=preferred_curr))
+        kb = keyboards.create_profile_keyboard(preferred_currency=preferred_curr)
+        return final_text, kb
+
+    @user_router.callback_query(F.data.in_({"show_profile", "user_profile", "profile", "back_to_profile"}))
+    @registration_required
+    async def profile_handler_callback(callback: types.CallbackQuery):
+        await callback.answer()
+        user_id = callback.from_user.id
+        data = await _render_user_profile(user_id, callback.from_user)
+        if not data:
+            await callback.answer("Не удалось получить данные профиля.", show_alert=True)
+            return
+        final_text, kb = data
+        try:
+            await callback.message.edit_text(final_text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest as e:
+            err_str = str(e).lower()
+            if "message is not modified" in err_str:
+                pass
+            elif "there is no text in the message to edit" in err_str or "message can't be edited" in err_str:
+                await callback.message.answer(final_text, reply_markup=kb, parse_mode="HTML")
+            else:
+                raise
+
+    @user_router.message(Command("profile"))
+    @user_router.message(F.text.in_({"👤 Мой профиль", "👤 Профиль", "Профиль"}))
+    @registration_required
+    async def profile_command_handler(message: types.Message):
+        user_id = message.from_user.id
+        data = await _render_user_profile(user_id, message.from_user)
+        if not data:
+            await message.answer("Не удалось получить данные профиля.")
+            return
+        final_text, kb = data
+        await message.answer(final_text, reply_markup=kb, parse_mode="HTML")
 
     @user_router.callback_query(F.data.startswith("set_currency_"))
     @registration_required
@@ -579,7 +618,7 @@ def get_user_router() -> Router:
             await callback.answer("Не удалось получить данные профиля.", show_alert=True)
             return
             
-        username = html.bold(user_db_data.get('username', 'Пользователь'))
+        raw_username = user_db_data.get('username') or callback.from_user.username or callback.from_user.full_name or "Пользователь"
         total_spent = user_db_data.get('total_spent', 0)
         total_months = user_db_data.get('total_months', 0)
         
@@ -596,7 +635,7 @@ def get_user_router() -> Router:
         else:
             vpn_status_text = VPN_NO_DATA_TEXT
             
-        final_text = get_profile_text(username, total_spent, total_months, vpn_status_text)
+        final_text = get_profile_text(raw_username, total_spent, total_months, vpn_status_text, user_id=user_id)
         formatted_spent = currency_service.format_price(total_spent, preferred_curr)
         
         # Добавляем дополнительную информацию
@@ -608,7 +647,7 @@ def get_user_router() -> Router:
         
         builder = InlineKeyboardBuilder()
         builder.button(text="⬅️ Назад", callback_data="show_profile")
-        await callback.message.edit_text(final_text, reply_markup=builder.as_markup())
+        await callback.message.edit_text(final_text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
     @user_router.callback_query(F.data == "profile_balance")
     @registration_required
@@ -652,7 +691,7 @@ def get_user_router() -> Router:
         builder.button(text="💳 Пополнить", callback_data="top_up_start")
         builder.button(text="⬅️ Назад", callback_data="show_profile")
         builder.adjust(1)
-        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+        await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
     @user_router.callback_query(F.data == "main_menu")
     @registration_required
