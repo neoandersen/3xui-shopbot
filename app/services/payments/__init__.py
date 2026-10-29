@@ -1,10 +1,11 @@
 """Payments services package for 3X-UI ShopBot.
-Provides integration modules for Lava.top and Platega.io payment gateways.
+Provides integration modules for AnyPay and Platega.io payment gateways.
 """
-from .lavatop import LavaTopService
+from .anypay import AnyPayService
 from .platega import PlategaService
 
 __all__ = [
-    "LavaTopService",
+    "AnyPayService",
     "PlategaService",
 ]
+

@@ -697,9 +697,9 @@ def create_payment_method_keyboard(
         builder.button(text="💳 Карты (UAH/RUB/KZT, World) / СБП — Aaio", callback_data="pay_aaio")
     if payment_methods and payment_methods.get("cryptomus"):
         builder.button(text="🌐 Мультивалютная крипта (USDT, BTC...) — Cryptomus", callback_data="pay_cryptomus")
-    if payment_methods and payment_methods.get("lavatop"):
-        cb_lavatop = f"pay:lavatop:{order_id}" if order_id else "pay_lavatop"
-        builder.button(text="⚡ Карты РФ / СБП (Lava.top)", callback_data=cb_lavatop)
+    if payment_methods and payment_methods.get("anypay"):
+        cb_anypay = f"pay:anypay:{order_id}" if order_id else "pay_anypay"
+        builder.button(text="💳 Банковские карты / СБП / Pay (AnyPay)", callback_data=cb_anypay)
     if payment_methods and payment_methods.get("platega"):
         cb_platega = f"pay:platega:{order_id}" if order_id else "pay_platega"
         builder.button(text="💳 Банковская карта / СБП (Platega)", callback_data=cb_platega)
@@ -874,8 +874,8 @@ def create_topup_payment_method_keyboard(payment_methods: dict) -> InlineKeyboar
         builder.button(text="💳 Карты (UAH/RUB/KZT, World) / СБП — Aaio", callback_data="topup_pay_aaio")
     if payment_methods and payment_methods.get("cryptomus"):
         builder.button(text="🌐 Мультивалютная крипта (USDT, BTC...) — Cryptomus", callback_data="topup_pay_cryptomus")
-    if payment_methods and payment_methods.get("lavatop"):
-        builder.button(text="⚡ Карты РФ / СБП (Lava.top)", callback_data="topup_pay_lavatop")
+    if payment_methods and payment_methods.get("anypay"):
+        builder.button(text="💳 Банковские карты / СБП / Pay (AnyPay)", callback_data="topup_pay_anypay")
     if payment_methods and payment_methods.get("platega"):
         builder.button(text="💳 Банковская карта / СБП (Platega)", callback_data="topup_pay_platega")
     if payment_methods and payment_methods.get("yookassa"):

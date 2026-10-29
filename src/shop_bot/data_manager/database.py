@@ -388,11 +388,12 @@ def initialize_db():
                 "cryptomus_enabled": "false",
                 "cryptomus_merchant_id": None,
                 "cryptomus_api_key": None,
-                # Lava.top payments (cards RF/World, SBP)
-                "lavatop_enabled": "false",
-                "lavatop_api_key": None,
-                "lavatop_offer_id": None,
-                "lavatop_currency": "RUB",
+                # AnyPay payments (cards RF, SBP, Pay)
+                "anypay_enabled": "false",
+                "anypay_project_id": None,
+                "anypay_secret_key": None,
+                "anypay_api_key": None,
+                "anypay_currency": "RUB",
                 # Platega.io payments
                 "platega_enabled": "false",
                 "platega_merchant_id": None,
@@ -473,6 +474,20 @@ def initialize_db():
                 conn.commit()
             except Exception as e:
                 logging.warning(f"Ошибка миграции legal URLs: {e}")
+
+            # Миграция: дефолтные ключи AnyPay
+            try:
+                for k, v in [
+                    ("anypay_enabled", "false"),
+                    ("anypay_project_id", ""),
+                    ("anypay_secret_key", ""),
+                    ("anypay_api_key", ""),
+                    ("anypay_currency", "RUB")
+                ]:
+                    cursor.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES (?, ?)", (k, v))
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"Ошибка миграции AnyPay settings: {e}")
 
             # Безопасная авто-миграция: атрибуция и онбординг в таблицу users (docs/SHOPBOT_AI_AND_ATTRIBUTION_SPEC.md)
             try:

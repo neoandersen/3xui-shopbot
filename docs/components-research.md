@@ -403,9 +403,71 @@
   - Из-за изоляции сетевых пространств (network namespaces) контейнер Docker видит локальные значения виртуального сетевого моста (`net.ipv4.tcp_max_syn_backlog = 128`, `net.ipv4.tcp_fin_timeout = 60`), в то время как физический хост защищён значениями `4096` и `15`.
   - Реализован гибридный механизм валидации: если локальный `/proc/sys` возвращает изолированные дефолты контейнера, `NginxHardeningService.audit_sysctl()` считывает конфигурационные файлы хоста из примонтированного `/etc/sysctl.d/` (`99-security-hardening.conf`, `99-neovpn-security.conf`) или слепок `data/sysctl_status.json`.
   - При значениях $\ge 4096$ (для очереди SYN) и $\le 15$ (для таймаута FIN) параметры помечаются как `"ok": True` с указанием источника (`"source": "host_sysctl_conf"` или `"source": "host_sysctl_snapshot"`).
+### 12.5. Интеграция телеметрии Nginx и параметров ядра sysctl в Docker-окружение
+- **Проброс системных директорий хоста в `docker-compose.yml`**:
+  ```yaml
+  services:
+    3xui-shopbot:
+      build: .
+      restart: unless-stopped
+      ports:
+        - '1488:1488'
+      volumes:
+        - .:/app/project
+        - /var/log/nginx:/var/log/nginx:ro
+        - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
+        - /etc/sysctl.d:/etc/sysctl.d:ro
+      container_name: 3xui-shopbot
+      deploy:
+        resources:
+          limits:
+            cpus: '0.70'      # Разрешаем использовать не более 70% ядра процессора
+            memory: 400M      # Жесткий лимит оперативной памяти в 400 Мегабайт
+      logging:
+        driver: "json-file"
+        options:
+          max-size: "10m"   # Ограничиваем лог-файл до 10 МБ
+          max-file: "3"     # Храним не больше 3 таких файлов
+  ```
+- **Изоляция и безопасность (`:ro`)**:
+  - Все хостовые каталоги монтируются строго в режиме только для чтения (`:ro`), предотвращая несанкционированную модификацию конфигурации или журналов хоста из контейнера.
+  - Лимиты ресурсов (`cpus: '0.70'`, `memory: 400M`) предотвращают деградацию хоста и OOM-сбои.
+  - Ротация журналов Docker (`json-file`, `max-size: 10m`, `max-file: 3`) защищает диск от переполнения.
+- **Гибридный аудит параметров ядра (Host Kernel Telemetry)**:
+  - Из-за изоляции сетевых пространств (network namespaces) контейнер Docker видит локальные значения виртуального сетевого моста (`net.ipv4.tcp_max_syn_backlog = 128`, `net.ipv4.tcp_fin_timeout = 60`), в то время как физический хост защищён значениями `4096` и `15`.
+  - Реализован гибридный механизм валидации: если локальный `/proc/sys` возвращает изолированные дефолты контейнера, `NginxHardeningService.audit_sysctl()` считывает конфигурационные файлы хоста из примонтированного `/etc/sysctl.d/` (`99-security-hardening.conf`, `99-neovpn-security.conf`) или слепок `data/sysctl_status.json`.
+  - При значениях $\ge 4096$ (для очереди SYN) и $\le 15$ (для таймаута FIN) параметры помечаются как `"ok": True` с указанием источника (`"source": "host_sysctl_conf"` или `"source": "host_sysctl_snapshot"`).
 - **Graceful Fallback & ENV-конфигурируемость**:
   - Пути конфигурируются через переменные окружения (`NGINX_CONF_DIR`, `CONF_D_DIR`, `HARDENING_CONF_PATH`, `SYSCTL_D_DIR`, `SYSCTL_CONF_PATH`, `NGINX_ACCESS_LOG`, `NGINX_ERROR_LOG`) со стандартными дефолтами.
   - При отсутствии каталогов или журналов сервис логирует понятное предупреждение `logger.warning` и возвращает базовые безопасные метрики без падения приложения.
   - Запросы на изменение настроек изнутри изолированного контейнера формируют триггеры `run_nginx_harden.trigger` / `run_sysctl_harden.trigger` для хостового демона.
+
+---
+
+## 13. Замена платёжного модуля Lava.top на AnyPay (SCI / Webhook IPN) и демонтаж устаревшего кода
+
+### 13.1. Архитектура интеграции AnyPay
+- **Модуль сервиса**: `app/services/payments/anypay.py` (`AnyPayService`).
+- **Модуль интеграции с ботом**: `src/shop_bot/modules/anypay_payment.py`.
+- **Генерация ссылки на оплату (Redirect SCI)**:
+  - Базовый URL: `https://anypay.io/merchant`.
+  - Параметры: `merchant_id`, `pay_id`, `amount`, `currency`, `desc`, `success_url`, `fail_url`, `sign`.
+  - Контрольная подпись создания платежа:
+    $$\text{sign} = \text{SHA-256}(\text{currency} : \text{amount} : \text{secret\_key} : \text{merchant\_id} : \text{pay\_id})$$
+- **Обработка входящего уведомления (Webhook / IPN Callback)**:
+  - Маршруты: `POST /webhook/anypay`, `POST /anypay-webhook`, `POST /payment/anypay/notify`.
+  - Контрольная подпись IPN оповещения:
+    $$\text{expected\_sign} = \text{SHA-256}(\text{currency} : \text{amount} : \text{pay\_id} : \text{merchant\_id} : \text{status} : \text{secret\_key})$$
+  - Строгий ответ сервера: HTTP 200 со строкой `"OK"` (`text/plain`).
+  - При несовпадении подписи или статусе отличном от `paid` — HTTP 400 Bad Request.
+
+### 13.2. Полный демонтаж Lava.top
+- Удалены файлы: `app/services/payments/lavatop.py` и `src/shop_bot/modules/lavatop_payment.py`.
+- Удалены неиспользуемые импорты и классы в `app/services/payments/__init__.py`, `src/shop_bot/bot/handlers.py`, `src/shop_bot/webhook_server/app.py`.
+- В инлайн-клавиатурах бота (`src/shop_bot/bot/keyboards.py`) кнопки Lava.top заменены на `«💳 Банковские карты / СБП / Pay (AnyPay)»`.
+- В веб-панели управления (`settings.html`) блок настроек Lava.top заменен на AnyPay (`anypay_project_id`, `anypay_secret_key`, `anypay_api_key`, кнопка быстрого копирования URL вебхука).
+- В белом списке Nginx харденинга устаревший маршрут `/lavatop-webhook` заменен на `/anypay-webhook` и `/payment/anypay/notify`.
+- Таблица транзакций и исторические платежи пользователей сохранены без изменений.
+
 
 

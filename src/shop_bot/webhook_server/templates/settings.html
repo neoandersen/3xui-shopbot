@@ -815,32 +815,39 @@
             </div>
             <div class="form-text text-secondary mb-3">Вебхук URL для указания в кабинете Cryptomus: <code>https://auth.neo-vpn.click:8443/webhook/cryptomus</code>. Поддерживаются: USDT, USDC, BTC, ETH, XRP, XMR, LTC, TON.</div>
 
-            <h3 class="h4 mt-4">Настройка Lava.top (Карты РФ, зарубежные карты, СБП)</h3>
+            <h3 class="h4 mt-4">Настройка AnyPay (Карты РФ, зарубежные карты, СБП)</h3>
             <div class="mb-3">
-              <input type="hidden" name="lavatop_enabled" value="false" />
+              <input type="hidden" name="anypay_enabled" value="false" />
               <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="lavatop_enabled" name="lavatop_enabled" value="true" {% if settings.lavatop_enabled == 'true' %}checked{% endif %}>
-                <label class="form-check-label" for="lavatop_enabled">Включить оплату через Lava.top</label>
+                <input class="form-check-input" type="checkbox" id="anypay_enabled" name="anypay_enabled" value="true" {% if settings.anypay_enabled == 'true' %}checked{% endif %}>
+                <label class="form-check-label" for="anypay_enabled">Включить оплату через AnyPay</label>
               </div>
             </div>
             <div class="mb-3">
-              <label class="form-label" for="lavatop_offer_id">Lava.top Offer ID</label>
-              <input class="form-control" type="text" id="lavatop_offer_id" name="lavatop_offer_id" value="{{ settings.lavatop_offer_id or '' }}" placeholder="ID продукта/оффера в кабинете Lava.top" />
+              <label class="form-label" for="anypay_project_id">AnyPay Project ID (ID проекта)</label>
+              <input class="form-control" type="text" id="anypay_project_id" name="anypay_project_id" value="{{ settings.anypay_project_id or '' }}" placeholder="ID проекта в AnyPay" />
             </div>
             <div class="mb-3 password-wrapper">
-              <label class="form-label" for="lavatop_api_key">Lava.top API Key</label>
+              <label class="form-label" for="anypay_secret_key">AnyPay Secret Key (Секретный ключ)</label>
               <div class="d-flex gap-2">
-                <input class="form-control" type="password" id="lavatop_api_key" name="lavatop_api_key" value="{{ settings.lavatop_api_key or '' }}" />
+                <input class="form-control" type="password" id="anypay_secret_key" name="anypay_secret_key" value="{{ settings.anypay_secret_key or '' }}" />
+                <button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
+              </div>
+            </div>
+            <div class="mb-3 password-wrapper">
+              <label class="form-label" for="anypay_api_key">AnyPay API Key (Опционально)</label>
+              <div class="d-flex gap-2">
+                <input class="form-control" type="password" id="anypay_api_key" name="anypay_api_key" value="{{ settings.anypay_api_key or '' }}" />
                 <button type="button" class="btn btn-outline-secondary toggle-password">👁️</button>
               </div>
             </div>
             <div class="mb-3">
-              <label class="form-label">URL вебхука для Lava.top</label>
+              <label class="form-label">URL вебхука для AnyPay (IPN / Callback)</label>
               <div class="input-group">
-                <input type="text" class="form-control font-monospace" id="lavatop_webhook_url" readonly value="https://{{ panel_domain }}:8443/webhook/lavatop" />
-                <button class="btn btn-outline-secondary" type="button" onclick="copyWebhookUrl('lavatop')">📋 Копировать</button>
+                <input type="text" class="form-control font-monospace" id="anypay_webhook_url" readonly value="https://{{ panel_domain }}:8443/webhook/anypay" />
+                <button class="btn btn-outline-secondary" type="button" onclick="copyWebhookUrl('anypay')">📋 Копировать</button>
               </div>
-              <div class="form-text text-secondary">Укажите этот адрес в личном кабинете Lava.top в настройках вебхуков проекта.</div>
+              <div class="form-text text-secondary">Укажите этот адрес в настройках проекта AnyPay в поле «URL оповещения».</div>
             </div>
 
             <h3 class="h4 mt-4">Настройка Platega.io (Банковские карты РФ, СБП)</h3>

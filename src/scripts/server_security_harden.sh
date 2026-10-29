@@ -344,7 +344,8 @@ map $request_uri $limit_req_exempt_key {
     ~^/webhook/ "";
     ~^/.*webhook.* "";
     ~^/payok-webhook "";
-    ~^/lavatop-webhook "";
+    ~^/anypay-webhook "";
+    ~^/payment/anypay/notify "";
     ~^/cryptomus-webhook "";
     ~^/yookassa-webhook "";
     ~^/aaio-webhook "";

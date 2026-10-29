@@ -86,7 +86,7 @@
   <tr>
     <td><b>Платежные шлюзы</b></td>
     <td>
-      • <b>Lava.top</b>: прием карт РФ, зарубежных карт и СБП для цифровых услуг (HMAC-SHA256)<br>
+      • <b>AnyPay</b>: банковские карты РФ/Мир, зарубежные карты, СБП и Pay (SCI / IPN SHA-256)<br>
       • <b>Platega.io</b>: банковские карты РФ и СБП (авторизация по X-Secret)<br>
       • <b>Aaio</b>: банковские карты (World, UAH, RUB, KZT) и СБП (0% для самозанятых/ИП)<br>
       • <b>Cryptomus</b>: прием криптовалют (USDT, USDC, BTC, TON, ETH, LTC, XMR)<br>
@@ -178,11 +178,11 @@ docker compose logs -f 3xui-shopbot
 
 Настройка шлюзов производится в веб-панели (**Настройки -> Настройки платежных систем**):
 
-### Lava.top (Карты РФ/Мир, СБП для цифровых услуг)
-- Создайте оффер для цифровых товаров в сервисе [Lava.top](https://gate.lava.top).
-- Авторизация по единственному API Key (`lavatop_api_key`), укажите также `lavatop_offer_id`.
-- Проверка подписи заголовка `X-Signature` по алгоритму HMAC-SHA256.
-- Webhook URL: `https://panel.yourdomain.com:8443/webhook/lavatop`.
+### AnyPay (Банковские карты РФ/Мир, СБП, Pay)
+- Создайте проект в сервисе [AnyPay.io](https://anypay.io).
+- Укажите в панели или `.env`: `ANYPAY_PROJECT_ID` (ID проекта) и `ANYPAY_SECRET_KEY` (Секретный ключ).
+- Подпись SCI и валидация IPN оповещений по алгоритму SHA-256.
+- Webhook URL: `https://panel.yourdomain.com:8443/webhook/anypay`.
 
 ### Platega.io (Банковские карты РФ, СБП)
 - Зарегистрируйтесь на сервисе [Platega.io](https://platega.io).

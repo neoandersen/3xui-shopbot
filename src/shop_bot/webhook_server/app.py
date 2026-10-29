@@ -34,7 +34,7 @@ from shop_bot.data_manager import speedtest_runner
 from shop_bot.data_manager import backup_manager
 from shop_bot.data_manager import resource_monitor
 from shop_bot.data_manager import database
-from app.services.payments.lavatop import LavaTopService
+from app.services.payments.anypay import AnyPayService
 from app.services.payments.platega import PlategaService
 from shop_bot.data_manager.database import (
     get_all_settings, update_setting, get_all_hosts, get_plans_for_host,
@@ -96,8 +96,8 @@ ALL_SETTINGS_KEYS = [
     "aaio_enabled", "aaio_merchant_id", "aaio_secret_1", "aaio_secret_2", "aaio_api_key",
     # Cryptomus payments (multi-crypto & P2P)
     "cryptomus_enabled", "cryptomus_merchant_id", "cryptomus_api_key",
-    # Lava.top payments (cards RF/World, SBP)
-    "lavatop_enabled", "lavatop_api_key", "lavatop_offer_id", "lavatop_currency",
+    # AnyPay payments (cards RF/World, SBP)
+    "anypay_enabled", "anypay_project_id", "anypay_secret_key", "anypay_api_key", "anypay_currency",
     # Platega.io payments
     "platega_enabled", "platega_merchant_id", "platega_secret",
     # Panel domain
@@ -1394,7 +1394,7 @@ def create_webhook_app(bot_controller_instance):
             checkbox_keys = [
                 'force_subscription', 'sbp_enabled', 'trial_enabled', 'enable_referrals',
                 'enable_fixed_referral_bonus', 'stars_enabled', 'yoomoney_enabled', 'monitoring_enabled',
-                'aaio_enabled', 'cryptomus_enabled', 'platega_enabled', 'lavatop_enabled'
+                'aaio_enabled', 'cryptomus_enabled', 'platega_enabled', 'anypay_enabled'
             ]
             for checkbox_key in checkbox_keys:
                 values = request.form.getlist(checkbox_key)
@@ -2428,37 +2428,42 @@ def create_webhook_app(bot_controller_instance):
                 return True
             return False
 
-    # --- Lava.top Webhook ---
+    # --- AnyPay Webhook ---
     @csrf.exempt
-    @flask_app.route('/webhook/lavatop', methods=['POST'])
-    @flask_app.route('/lavatop-webhook', methods=['POST'])
-    def lavatop_webhook():
-        raw_body = request.get_data()
-        signature = request.headers.get("X-Signature", "")
-        api_key = get_setting("lavatop_api_key", "")
+    @flask_app.route('/webhook/anypay', methods=['POST'])
+    @flask_app.route('/anypay-webhook', methods=['POST'])
+    @flask_app.route('/payment/anypay/notify', methods=['POST'])
+    def anypay_webhook():
+        data = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
+        logger.info(f"AnyPay webhook received data: {data}")
 
-        if not LavaTopService.verify_webhook_signature(raw_body, signature, api_key):
-            logger.warning("Lava.top webhook: недействительная подпись X-Signature")
-            return jsonify({"error": "invalid signature"}), 403
+        secret_key = get_setting("anypay_secret_key", "") or os.getenv("ANYPAY_SECRET_KEY", "")
+        if not secret_key:
+            logger.error("AnyPay webhook: secret_key не настроен в БД или .env")
+            return "Bad Request", 400
 
-        payload = request.get_json(silent=True) or {}
-        logger.info(f"Lava.top webhook payload: {payload}")
+        if not AnyPayService.verify_notification_signature(data, secret_key):
+            logger.warning("AnyPay webhook: недействительная подпись sign")
+            return "Bad Request", 400
 
-        event_status = str(payload.get("status", "")).lower()
-        event_type = str(payload.get("event", "")).lower()
-        order_id = payload.get("orderId") or payload.get("order_id")
+        status = str(data.get("status") or "").lower()
+        if status != "paid":
+            logger.warning(f"AnyPay webhook: статус платежа '{status}' отличен от 'paid'")
+            return "Bad Request", 400
 
-        if not order_id and "data" in payload and isinstance(payload["data"], dict):
-            order_id = payload["data"].get("orderId")
-            event_status = str(payload["data"].get("status", event_status)).lower()
+        pay_id = str(data.get("pay_id") or "").strip()
+        if not pay_id:
+            logger.error("AnyPay webhook: отсутствует pay_id")
+            return "Bad Request", 400
 
-        if event_status in ["success", "paid"] or event_type in ["payment.success", "contract.created_and_paid"]:
-            success = process_payment_success(order_id=order_id, provider="lavatop")
-            if success:
-                return jsonify({"status": "ok"}), 200
-            return jsonify({"error": "order processing failed"}), 500
-
-        return jsonify({"status": "ignored"}), 200
+        success = process_payment_success(order_id=pay_id, provider="anypay")
+        if success:
+            logger.info(f"AnyPay webhook: платёж {pay_id} успешно обработан.")
+            from flask import Response
+            return Response("OK", status=200, mimetype="text/plain")
+        else:
+            logger.error(f"AnyPay webhook: ошибка обработки заказа {pay_id}")
+            return "Bad Request", 400
 
     # --- Platega.io Webhook ---
     @csrf.exempt

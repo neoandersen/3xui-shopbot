@@ -34,7 +34,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import html as py_html
 
 from shop_bot.bot import keyboards
-from shop_bot.modules import xui_api, aaio_payment, cryptomus_payment, lavatop_payment, platega_payment
+from shop_bot.modules import xui_api, aaio_payment, cryptomus_payment, anypay_payment, platega_payment
 from shop_bot.services import ai_onboarding
 from shop_bot.data_manager.database import (
     get_user, add_new_key, get_user_keys, update_user_stats,
@@ -81,7 +81,7 @@ from shop_bot.config import (
 
 def get_current_payment_methods() -> dict:
     from shop_bot.data_manager.database import get_setting
-    from shop_bot.modules.lavatop_payment import is_lavatop_enabled
+    from shop_bot.modules.anypay_payment import is_anypay_enabled
     from shop_bot.modules.platega_payment import is_platega_enabled
 
     yookassa_shop_id = get_setting("yookassa_shop_id")
@@ -114,7 +114,7 @@ def get_current_payment_methods() -> dict:
         "yoomoney": str(get_setting("yoomoney_enabled", "false")).lower() in ("true", "1", "yes"),
         "aaio": aaio_enabled,
         "cryptomus": cryptomus_enabled,
-        "lavatop": is_lavatop_enabled(),
+        "anypay": is_anypay_enabled(),
         "platega": is_platega_enabled(),
     }
 
@@ -1065,9 +1065,9 @@ def get_user_router() -> Router:
             await callback.message.edit_text("❌ Не удалось создать счёт Cryptomus. Проверьте настройки шлюза.")
             await state.clear()
 
-    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data.startswith("topup:lavatop") | (F.data == "topup_pay_lavatop"))
-    async def topup_pay_lavatop_handler(callback: types.CallbackQuery, state: FSMContext):
-        await callback.answer("Создаю счёт Lava.top...")
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data.startswith("topup:anypay") | (F.data == "topup_pay_anypay"))
+    async def topup_pay_anypay_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт AnyPay...")
         data = await state.get_data()
         user_id = callback.from_user.id
         amount = float(data.get('topup_amount', 0))
@@ -1087,13 +1087,14 @@ def get_user_router() -> Router:
             "user_id": user_id,
             "price": amount_usd,
             "action": "top_up",
-            "payment_method": "Lava.top",
+            "payment_method": "AnyPay",
         }
 
-        ok, pay_url, invoice_id = await lavatop_payment.create_lavatop_payment(
+        ok, pay_url = await anypay_payment.create_anypay_payment(
             order_id=order_id,
             amount_rub=amount_rub,
-            user_tg_id=user_id
+            description=f"Пополнение баланса #{user_id}",
+            currency="RUB"
         )
         if ok and pay_url:
             create_pending_transaction(
@@ -1101,30 +1102,30 @@ def get_user_router() -> Router:
                 user_id=user_id,
                 amount_rub=amount_rub,
                 metadata=metadata,
-                provider="lavatop",
-                provider_payment_id=invoice_id or order_id,
+                provider="anypay",
+                provider_payment_id=order_id,
                 amount_usd=amount_usd,
                 exchange_rate=rate,
                 currency_name="RUB",
                 amount_currency=amount_rub,
-                external_invoice_id=invoice_id,
+                external_invoice_id=order_id,
                 pay_currency="RUB",
                 exchange_rate_used=rate
             )
             await callback.message.edit_text(
-                f"Счёт на пополнение через Lava.top сформирован:\n"
+                f"Счёт на пополнение через AnyPay сформирован:\n"
                 f"Сумма: <b>{amount_rub:.2f} RUB</b> (~${amount_usd:.2f} USD)\n\n"
                 f"Нажмите на кнопку ниже для перехода к оплате банковской картой или СБП:",
                 reply_markup=keyboards.create_invoice_payment_keyboard(
                     payment_url=pay_url,
-                    check_callback=f"check_lava_{order_id}",
+                    check_callback=f"check_payment_anypay_{order_id}",
                     cancel_callback="cancel_payment"
                 ),
                 parse_mode="HTML"
             )
             await state.clear()
         else:
-            await callback.message.edit_text("❌ Не удалось создать счёт Lava.top. Проверьте настройки шлюза.")
+            await callback.message.edit_text("❌ Не удалось создать счёт AnyPay. Проверьте настройки шлюза.")
             await state.clear()
 
     @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data.startswith("topup:platega") | (F.data == "topup_pay_platega"))
@@ -3160,9 +3161,9 @@ def get_user_router() -> Router:
             await callback.message.edit_text("❌ Не удалось создать счёт Cryptomus. Попробуйте другой способ оплаты.")
             await state.clear()
 
-    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data.startswith("pay:lavatop") | (F.data == "pay_lavatop"))
-    async def create_lavatop_payment_handler(callback: types.CallbackQuery, state: FSMContext):
-        await callback.answer("Создаю счёт в Lava.top...")
+    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data.startswith("pay:anypay") | (F.data == "pay_anypay"))
+    async def create_anypay_payment_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт в AnyPay...")
         data = await state.get_data()
         user_id = callback.from_user.id
         plan = get_plan_by_id(data.get('plan_id'))
@@ -3172,7 +3173,7 @@ def get_user_router() -> Router:
             return
 
         final_price_usd = float(data.get('final_price', plan['price']))
-        if callback.data and callback.data.startswith("pay:lavatop:"):
+        if callback.data and callback.data.startswith("pay:anypay:"):
             parts = callback.data.split(":")
             order_id = parts[2] if len(parts) > 2 and parts[2] else str(uuid.uuid4())
         else:
@@ -3194,20 +3195,21 @@ def get_user_router() -> Router:
             "host_name": data.get('host_name'),
             "plan_id": data.get('plan_id'),
             "customer_email": customer_email,
-            "payment_method": "Lava.top",
+            "payment_method": "AnyPay",
             "promo_code": data.get('promo_code'),
             "promo_discount_percent": data.get('promo_discount_percent'),
             "promo_discount_amount": data.get('promo_discount_amount'),
         }
 
-        ok, pay_url, invoice_id = await lavatop_payment.create_lavatop_payment(
+        ok, pay_url = await anypay_payment.create_anypay_payment(
             order_id=order_id,
             amount_rub=amount_rub,
-            user_tg_id=user_id
+            description=f"Оплата подписки NeoVPN #{order_id}",
+            currency="RUB"
         )
 
         if not ok or not pay_url:
-            await callback.message.edit_text("❌ Не удалось создать счёт Lava.top. Попробуйте другой способ оплаты.")
+            await callback.message.edit_text("❌ Не удалось создать счёт AnyPay. Попробуйте другой способ оплаты.")
             await state.clear()
             return
 
@@ -3217,26 +3219,26 @@ def get_user_router() -> Router:
                 user_id=user_id,
                 amount_rub=amount_rub,
                 metadata=metadata,
-                provider="lavatop",
-                provider_payment_id=invoice_id or order_id,
+                provider="anypay",
+                provider_payment_id=order_id,
                 amount_usd=final_price_usd,
                 exchange_rate=rate,
                 currency_name="RUB",
                 amount_currency=amount_rub,
-                external_invoice_id=invoice_id,
+                external_invoice_id=order_id,
                 pay_currency="RUB",
                 exchange_rate_used=rate
             )
         except Exception as e:
-            logger.warning(f"Lava.top: не удалось создать pending-транзакцию: {e}")
+            logger.warning(f"AnyPay: не удалось создать pending-транзакцию: {e}")
 
         await callback.message.edit_text(
-            f"Счёт на оплату через Lava.top сформирован:\n"
+            f"Счёт на оплату через AnyPay сформирован:\n"
             f"Сумма к оплате: <b>{amount_rub:.2f} RUB</b> (~${final_price_usd:.2f} USD)\n\n"
             f"Нажмите кнопку ниже для перехода к оплате банковской картой или СБП:",
             reply_markup=keyboards.create_invoice_payment_keyboard(
                 payment_url=pay_url,
-                check_callback=f"check_lava_{order_id}",
+                check_callback=f"check_payment_anypay_{order_id}",
                 cancel_callback="cancel_payment"
             ),
             parse_mode="HTML"
@@ -3326,16 +3328,12 @@ def get_user_router() -> Router:
         )
         await state.clear()
 
-    @user_router.callback_query(F.data.startswith("check_payment_") | F.data.startswith("check_lava_"))
+    @user_router.callback_query(F.data.startswith("check_payment_"))
     async def check_provider_payment_callback(callback: types.CallbackQuery, bot: Bot):
         await callback.answer("Проверяю статус оплаты...")
-        if callback.data.startswith("check_lava_"):
-            provider = "lavatop"
-            order_id = callback.data.replace("check_lava_", "", 1)
-        else:
-            parts = callback.data.split("_")
-            provider = parts[2]
-            order_id = "_".join(parts[3:])
+        parts = callback.data.split("_")
+        provider = parts[2]
+        order_id = "_".join(parts[3:])
 
         tx = get_transaction_by_provider_payment_id(provider, order_id)
         if tx and tx.get("status") in ("paid", "completed", "success"):
@@ -3356,18 +3354,22 @@ def get_user_router() -> Router:
                     await callback.message.edit_text("✅ Оплата успешно получена и активирована!")
                     return
 
-        elif provider in ("lavatop", "lava"):
-            invoice_id = (tx.get("external_invoice_id") or tx.get("provider_payment_id") or order_id) if tx else order_id
-            status = await lavatop_payment.check_lavatop_status(invoice_id)
+        elif provider == "anypay":
+            status = await anypay_payment.check_anypay_status(order_id)
             if status and str(status).lower() in ["paid", "success", "completed"]:
                 tx_completed = find_and_complete_pending_transaction(
                     payment_id=order_id,
                     amount_rub=None,
-                    payment_method="Lava.top"
+                    payment_method="AnyPay"
                 )
                 if tx_completed:
                     await process_successful_payment(bot, tx_completed)
-                    await callback.message.edit_text("✅ Оплата через Lava.top успешно подтверждена и подписка активирована!")
+                    await callback.message.edit_text("✅ Оплата через AnyPay успешно подтверждена и подписка активирована!")
+                    return
+            else:
+                tx_check = get_transaction_by_provider_payment_id("anypay", order_id)
+                if tx_check and tx_check.get("status") in ("paid", "completed", "success"):
+                    await callback.message.edit_text("✅ Оплата через AnyPay подтверждена и обработана!")
                     return
 
         elif provider == "platega":

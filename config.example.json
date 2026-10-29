@@ -15,9 +15,10 @@
   "panel_login": "admin",
   "panel_password": "admin",
   "panel_domain": "auth.yourdomain.com",
-  "lavatop_enabled": false,
-  "lavatop_api_key": "",
-  "lavatop_offer_id": "",
+  "anypay_enabled": false,
+  "anypay_project_id": "",
+  "anypay_secret_key": "",
+  "anypay_api_key": "",
   "platega_enabled": false,
   "platega_merchant_id": "",
   "platega_secret": ""
