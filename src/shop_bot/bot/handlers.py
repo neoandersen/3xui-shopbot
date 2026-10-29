@@ -1090,13 +1090,19 @@ def get_user_router() -> Router:
             "payment_method": "AnyPay",
         }
 
-        ok, pay_url = await anypay_payment.create_anypay_payment(
+        payment_result = await anypay_payment.create_anypay_payment(
             order_id=order_id,
             amount_rub=amount_rub,
             description=f"Пополнение баланса #{user_id}",
             currency="RUB"
         )
-        if ok and pay_url:
+        if isinstance(payment_result, tuple):
+            pay_url = payment_result[1] if len(payment_result) > 1 and payment_result[0] else None
+        else:
+            pay_url = payment_result
+
+        if pay_url and isinstance(pay_url, str) and pay_url.startswith("http"):
+            pay_url = str(pay_url).strip()
             create_pending_transaction(
                 payment_id=order_id,
                 user_id=user_id,
@@ -3201,17 +3207,23 @@ def get_user_router() -> Router:
             "promo_discount_amount": data.get('promo_discount_amount'),
         }
 
-        ok, pay_url = await anypay_payment.create_anypay_payment(
+        payment_result = await anypay_payment.create_anypay_payment(
             order_id=order_id,
             amount_rub=amount_rub,
             description=f"Оплата подписки NeoVPN #{order_id}",
             currency="RUB"
         )
+        if isinstance(payment_result, tuple):
+            pay_url = payment_result[1] if len(payment_result) > 1 and payment_result[0] else None
+        else:
+            pay_url = payment_result
 
-        if not ok or not pay_url:
+        if not pay_url or not isinstance(pay_url, str) or not str(pay_url).startswith("http"):
             await callback.message.edit_text("❌ Не удалось создать счёт AnyPay. Попробуйте другой способ оплаты.")
             await state.clear()
             return
+
+        pay_url = str(pay_url).strip()
 
         try:
             create_pending_transaction(

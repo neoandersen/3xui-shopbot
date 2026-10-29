@@ -65,15 +65,15 @@ class AnyPayService:
 
     def generate_payment_url(
         self,
-        pay_id: str,
-        amount: float,
+        pay_id: str = "",
+        amount: float = 0.0,
         description: str = "Оплата подписки NeoVPN",
         currency: Optional[str] = None,
         success_url: Optional[str] = None,
         fail_url: Optional[str] = None,
         merchant_id: Optional[str] = None,
         secret_key: Optional[str] = None
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> Optional[str]:
         merchant_id = str(merchant_id if merchant_id is not None else self.project_id).strip()
         secret_key = str(secret_key if secret_key is not None else self.secret_key).strip()
         pay_id = str(pay_id).strip()
@@ -81,7 +81,7 @@ class AnyPayService:
 
         if not (merchant_id and secret_key):
             logger.error("AnyPay не настроен: отсутствует project_id или secret_key")
-            return False, None
+            return None
 
         amount_str = f"{float(amount):.2f}".strip()
         sign = self.calculate_payment_sign(
@@ -107,7 +107,7 @@ class AnyPayService:
 
         query_string = urllib.parse.urlencode(params)
         payment_url = f"{ANYPAY_MERCHANT_URL}?{query_string}"
-        return True, payment_url
+        return payment_url
 
     @staticmethod
     def verify_notification_signature(

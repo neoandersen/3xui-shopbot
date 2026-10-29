@@ -51,22 +51,22 @@ def calculate_payment_sign(
     )
 
 def generate_payment_url(
-    pay_id: str,
-    amount: float,
+    pay_id: str = "",
+    amount: float = 0.0,
     description: str = "Оплата подписки NeoVPN",
     currency: Optional[str] = None,
     success_url: Optional[str] = None,
     fail_url: Optional[str] = None,
     merchant_id: Optional[str] = None,
     secret_key: Optional[str] = None
-) -> Tuple[bool, Optional[str]]:
+) -> Optional[str]:
     service = get_anypay_service()
     merchant_id = str(merchant_id if merchant_id is not None else service.project_id).strip()
     secret_key = str(secret_key if secret_key is not None else service.secret_key).strip()
     pay_id = str(pay_id).strip()
     currency = str(currency or service.currency).strip().upper()
 
-    return service.generate_payment_url(
+    result = service.generate_payment_url(
         pay_id=pay_id,
         amount=amount,
         description=str(description).strip(),
@@ -76,6 +76,9 @@ def generate_payment_url(
         merchant_id=merchant_id,
         secret_key=secret_key
     )
+    if isinstance(result, tuple):
+        return result[1] if len(result) > 1 and result[0] else None
+    return result
 
 def verify_notification_signature(
     data: Dict[str, Any],
@@ -93,16 +96,19 @@ async def create_anypay_payment(
     amount_rub: float,
     description: str = "Оплата подписки NeoVPN",
     currency: str = "RUB"
-) -> Tuple[bool, Optional[str]]:
+) -> Optional[str]:
     pay_id = str(order_id).strip()
     currency = str(currency).strip().upper()
     desc = str(description).strip()
-    return generate_payment_url(
+    result = generate_payment_url(
         pay_id=pay_id,
         amount=amount_rub,
         description=desc,
         currency=currency
     )
+    if isinstance(result, tuple):
+        return result[1] if len(result) > 1 and result[0] else None
+    return result
 
 async def check_anypay_status(pay_id: str) -> Optional[str]:
     service = get_anypay_service()

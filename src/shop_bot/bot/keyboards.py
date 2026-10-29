@@ -860,8 +860,11 @@ def create_invoice_payment_keyboard(
     check_callback: str,
     cancel_callback: str = "cancel_payment"
 ) -> InlineKeyboardMarkup:
+    if isinstance(payment_url, (tuple, list)):
+        payment_url = payment_url[1] if len(payment_url) > 1 else payment_url[0]
+    payment_url = str(payment_url or "").strip()
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔗 Оплатить заказ", url=payment_url)
+    builder.button(text="💳 Оплатить", url=payment_url)
     builder.button(text="🔄 Проверить оплату", callback_data=check_callback)
     builder.button(text="❌ Отмена", callback_data=cancel_callback)
     builder.adjust(1)
