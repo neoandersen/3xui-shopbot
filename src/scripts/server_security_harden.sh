@@ -499,21 +499,23 @@ EOF
     echo "  -> Generated web audit report: ${AUDIT_HTML}"
 fi
 
-# Deploy Privacy Policy to landing directory and active document root
-PRIVACY_SRC="${PROJECT_ROOT}/deploy/landing/privacy.html"
-if [[ -f "${PRIVACY_SRC}" ]]; then
-    if [[ -d "${LANDING_DIR}" ]]; then
-        $SUDO cp "${PRIVACY_SRC}" "${LANDING_DIR}/privacy.html" 2>/dev/null || true
-        $SUDO chmod 644 "${LANDING_DIR}/privacy.html" 2>/dev/null || true
-        echo "  -> Deployed Privacy Policy HTML: ${LANDING_DIR}/privacy.html"
+# Deploy Legal Documents (Privacy Policy & Terms of Service) to landing directory and active document root
+for legal_file in "privacy.html" "terms.html"; do
+    LEGAL_SRC="${PROJECT_ROOT}/deploy/landing/${legal_file}"
+    if [[ -f "${LEGAL_SRC}" ]]; then
+        if [[ -d "${LANDING_DIR}" ]]; then
+            $SUDO cp "${LEGAL_SRC}" "${LANDING_DIR}/${legal_file}" 2>/dev/null || true
+            $SUDO chmod 644 "${LANDING_DIR}/${legal_file}" 2>/dev/null || true
+            echo "  -> Deployed ${legal_file} HTML: ${LANDING_DIR}/${legal_file}"
+        fi
+        if [[ -d "/var/www/sub" ]]; then
+            $SUDO cp "${LEGAL_SRC}" "/var/www/sub/${legal_file}" 2>/dev/null || true
+            $SUDO chmod 644 "/var/www/sub/${legal_file}" 2>/dev/null || true
+            $SUDO chown www-data:www-data "/var/www/sub/${legal_file}" 2>/dev/null || true
+            echo "  -> Deployed ${legal_file} HTML: /var/www/sub/${legal_file}"
+        fi
     fi
-    if [[ -d "/var/www/sub" ]]; then
-        $SUDO cp "${PRIVACY_SRC}" "/var/www/sub/privacy.html" 2>/dev/null || true
-        $SUDO chmod 644 "/var/www/sub/privacy.html" 2>/dev/null || true
-        $SUDO chown www-data:www-data "/var/www/sub/privacy.html" 2>/dev/null || true
-        echo "  -> Deployed Privacy Policy HTML: /var/www/sub/privacy.html"
-    fi
-fi
+done
 
 echo ""
 echo "========================================================================"

@@ -185,6 +185,11 @@ def create_webhook_app(bot_controller_instance):
     def privacy_policy_page():
         return render_template('privacy.html')
 
+    @flask_app.route('/terms', methods=['GET'])
+    @flask_app.route('/terms.html', methods=['GET'])
+    def terms_of_service_page():
+        return render_template('terms.html')
+
     def get_common_template_data():
         bot_status = _bot_controller.get_status()
         support_bot_status = _support_bot_controller.get_status()
