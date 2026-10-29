@@ -8,4 +8,15 @@ services:
       - .:/app/project
       - /var/log/nginx:/var/log/nginx:ro
       - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
+      - /etc/sysctl.d:/etc/sysctl.d:ro
     container_name: 3xui-shopbot
+    deploy:
+      resources:
+        limits:
+          cpus: '0.70'      # Разрешаем использовать не более 70% ядра процессора
+          memory: 400M      # Жесткий лимит оперативной памяти в 400 Мегабайт
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"   # Ограничиваем лог-файл до 10 МБ
+        max-file: "3"     # Храним не больше 3 таких файлов

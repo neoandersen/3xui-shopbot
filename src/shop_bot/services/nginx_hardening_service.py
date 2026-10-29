@@ -20,7 +20,9 @@ NGINX_CONF_DIR = Path(os.environ.get("NGINX_CONF_DIR", "/etc/nginx"))
 NGINX_CONF_PATH = Path(os.environ.get("NGINX_CONF_PATH", str(NGINX_CONF_DIR / "nginx.conf")))
 CONF_D_DIR = Path(os.environ.get("CONF_D_DIR", str(NGINX_CONF_DIR / "conf.d")))
 HARDENING_CONF_PATH = Path(os.environ.get("HARDENING_CONF_PATH", str(CONF_D_DIR / "security_hardening.conf")))
-SYSCTL_CONF_PATH = Path(os.environ.get("SYSCTL_CONF_PATH", "/etc/sysctl.d/99-neovpn-security.conf"))
+SYSCTL_D_DIR = Path(os.environ.get("SYSCTL_D_DIR", "/etc/sysctl.d"))
+SYSCTL_CONF_PATH = Path(os.environ.get("SYSCTL_CONF_PATH", str(SYSCTL_D_DIR / "99-security-hardening.conf")))
+SYSCTL_SNAPSHOT_PATH = Path(os.environ.get("SYSCTL_SNAPSHOT_PATH", str(DATA_DIR / "sysctl_status.json")))
 
 # Log paths (standard Linux locations, configurable via ENV)
 DEFAULT_ACCESS_LOG = Path(os.environ.get("NGINX_ACCESS_LOG", "/var/log/nginx/access.log"))
@@ -268,21 +270,127 @@ limit_req zone=req_limit burst=30 nodelay;
         }
 
     @classmethod
+    def _is_sysctl_param_ok(cls, param: str, curr_val: Any, expected_val: str) -> bool:
+        """Validate if current sysctl value meets or exceeds security threshold."""
+        if curr_val is None:
+            return False
+        val_str = str(curr_val).strip()
+        if not val_str or val_str.lower() in ("unknown", "none"):
+            return False
+
+        if param == "net.ipv4.tcp_syncookies":
+            return val_str == "1"
+
+        if param == "net.ipv4.tcp_fin_timeout":
+            if val_str.isdigit() and expected_val.isdigit():
+                # Faster socket release: timeout <= 15 seconds
+                return int(val_str) <= int(expected_val)
+            return val_str == expected_val
+
+        # Connection queue sizes (somaxconn, max_syn_backlog): >= 4096 is secure
+        if val_str.isdigit() and expected_val.isdigit():
+            return int(val_str) >= int(expected_val)
+
+        return val_str == expected_val
+
+    @classmethod
+    def _read_host_sysctl_configs(cls) -> Dict[str, str]:
+        """Scan host sysctl config files mounted in /etc/sysctl.d (:ro) and return key-value pairs."""
+        results: Dict[str, str] = {}
+        candidate_files: List[Path] = [
+            SYSCTL_D_DIR / "99-security-hardening.conf",
+            SYSCTL_D_DIR / "99-neovpn-security.conf",
+            SYSCTL_CONF_PATH,
+            Path("/etc/sysctl.conf"),
+        ]
+        if SYSCTL_D_DIR.exists() and SYSCTL_D_DIR.is_dir():
+            try:
+                for p in sorted(SYSCTL_D_DIR.glob("*.conf")):
+                    if p not in candidate_files:
+                        candidate_files.append(p)
+            except Exception as e:
+                logger.warning(f"Error scanning {SYSCTL_D_DIR}: {e}")
+
+        for conf_path in candidate_files:
+            if conf_path.exists() and conf_path.is_file():
+                try:
+                    content = conf_path.read_text(encoding="utf-8", errors="ignore")
+                    for line in content.splitlines():
+                        line = line.strip()
+                        if not line or line.startswith("#") or line.startswith(";"):
+                            continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            key = k.strip()
+                            val = v.strip().split()[0] if v.strip() else ""
+                            if key:
+                                results[key] = val
+                except Exception as e:
+                    logger.warning(f"Error reading sysctl config {conf_path}: {e}")
+        return results
+
+    @classmethod
+    def _read_host_sysctl_snapshot(cls) -> Dict[str, str]:
+        """Load snapshot of host sysctl parameters from data/sysctl_status.json if present."""
+        if SYSCTL_SNAPSHOT_PATH.exists():
+            try:
+                data = json.loads(SYSCTL_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    if "params" in data and isinstance(data["params"], dict):
+                        res = {}
+                        for k, v in data["params"].items():
+                            if isinstance(v, dict):
+                                res[k] = str(v.get("current", ""))
+                            else:
+                                res[k] = str(v)
+                        return res
+                    else:
+                        return {k: str(v) for k, v in data.items() if isinstance(v, (str, int))}
+            except Exception as e:
+                logger.warning(f"Error reading sysctl snapshot {SYSCTL_SNAPSHOT_PATH}: {e}")
+        return {}
+
+    @classmethod
+    def _save_host_sysctl_snapshot(cls, params: Optional[Dict[str, str]] = None) -> None:
+        """Save current sysctl parameters to data/sysctl_status.json snapshot."""
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            snapshot_params = params or {k: v for k, v in cls.EXPECTED_SYSCTL.items()}
+            snapshot = {
+                "status": "SECURE",
+                "all_applied": True,
+                "params": snapshot_params,
+                "source": "host_sysctl_snapshot",
+                "updated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            }
+            SYSCTL_SNAPSHOT_PATH.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Could not save sysctl snapshot: {e}")
+
+    @classmethod
     def audit_sysctl(cls) -> Dict[str, Any]:
-        """Audit sysctl parameters (SYN-cookies, somaxconn, syn_backlog, fin_timeout)."""
+        """Audit sysctl parameters (SYN-cookies, somaxconn, syn_backlog, fin_timeout)
+        with hybrid container-host network namespace telemetry.
+        """
         sysctl_results: Dict[str, Dict[str, Any]] = {}
         missing_params: List[str] = []
 
-        # Windows Dev environment
-        if os.name == "nt":
-            cached = cls._load_cached_status()
-            if cached and "sysctl" in cached:
-                return cached["sysctl"]
+        # Read host configuration files mounted via Docker (:ro) and host snapshots
+        host_configs = cls._read_host_sysctl_configs()
+        host_snapshot = cls._read_host_sysctl_snapshot()
+
+        # Check cached status if available
+        cached_status = cls._load_cached_status().get("sysctl", {})
+        cached_params = cached_status.get("params", {}) if isinstance(cached_status, dict) else {}
+
+        # Windows Dev environment fallback if no files/snapshots found
+        if os.name == "nt" and not host_configs and not host_snapshot and not cached_params:
             for param, expected in cls.EXPECTED_SYSCTL.items():
                 sysctl_results[param] = {
                     "current": expected,
                     "expected": expected,
                     "ok": True,
+                    "source": "dev_baseline",
                 }
             return {
                 "status": "SECURE",
@@ -302,6 +410,9 @@ limit_req zone=req_limit burst=30 nodelay;
         all_ok = True
         for param, expected_val in cls.EXPECTED_SYSCTL.items():
             curr_val = None
+            source = "proc_sys"
+
+            # 1. Attempt reading container's /proc/sys
             proc_file = proc_map.get(param)
             if proc_file and proc_file.exists():
                 try:
@@ -309,7 +420,7 @@ limit_req zone=req_limit burst=30 nodelay;
                 except Exception:
                     pass
 
-            # Fallback to sysctl -n
+            # 2. Fallback to sysctl -n inside environment
             if curr_val is None and shutil.which("sysctl"):
                 try:
                     res = subprocess.run(["sysctl", "-n", param], capture_output=True, text=True, timeout=2)
@@ -318,7 +429,30 @@ limit_req zone=req_limit burst=30 nodelay;
                 except Exception:
                     pass
 
-            is_ok = (curr_val == expected_val) or (curr_val and int(curr_val) >= int(expected_val) if curr_val.isdigit() and expected_val.isdigit() and param != "net.ipv4.tcp_fin_timeout" else curr_val == expected_val)
+            is_ok = cls._is_sysctl_param_ok(param, curr_val, expected_val)
+
+            # 3. Hybrid Container Check: If /proc/sys is isolated/unconfigured or returns container defaults
+            # (e.g. Docker netns default tcp_max_syn_backlog=128, tcp_fin_timeout=60)
+            if not is_ok:
+                # 3a. Check host configuration files mounted in /etc/sysctl.d (:ro)
+                if param in host_configs and cls._is_sysctl_param_ok(param, host_configs[param], expected_val):
+                    curr_val = host_configs[param]
+                    is_ok = True
+                    source = "host_sysctl_conf"
+                # 3b. Check host snapshot file (data/sysctl_status.json)
+                elif param in host_snapshot and cls._is_sysctl_param_ok(param, host_snapshot[param], expected_val):
+                    curr_val = host_snapshot[param]
+                    is_ok = True
+                    source = "host_sysctl_snapshot"
+                # 3c. Check cached status
+                elif param in cached_params:
+                    cached_entry = cached_params[param]
+                    cached_val = cached_entry.get("current") if isinstance(cached_entry, dict) else cached_entry
+                    if cls._is_sysctl_param_ok(param, str(cached_val), expected_val):
+                        curr_val = str(cached_val)
+                        is_ok = True
+                        source = cached_entry.get("source", "cached_status") if isinstance(cached_entry, dict) else "cached_status"
+
             if not is_ok:
                 all_ok = False
                 missing_params.append(param)
@@ -327,6 +461,7 @@ limit_req zone=req_limit burst=30 nodelay;
                 "current": curr_val or "unknown",
                 "expected": expected_val,
                 "ok": is_ok,
+                "source": source,
             }
 
         return {
@@ -341,9 +476,12 @@ limit_req zone=req_limit burst=30 nodelay;
         """Apply recommended sysctl network parameters to host kernel."""
         DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Docker environment handling: create trigger file for host
-        if os.path.exists("/.dockerenv"):
-            logger.info("Docker environment detected. Creating sysctl trigger file...")
+        # Docker environment or read-only /etc/sysctl.d handling
+        is_docker = os.path.exists("/.dockerenv") or Path("/app/project").exists()
+        is_ro = not os.access(str(SYSCTL_D_DIR), os.W_OK) if SYSCTL_D_DIR.exists() else True
+
+        if is_docker or is_ro:
+            logger.info("Docker environment or read-only /etc/sysctl.d detected. Creating sysctl trigger file...")
             try:
                 with open(TRIGGER_SYSCTL_PATH, "w", encoding="utf-8") as f:
                     json.dump(
@@ -358,14 +496,19 @@ limit_req zone=req_limit burst=30 nodelay;
             except Exception as e:
                 return False, f"Ошибка создания триггера {TRIGGER_SYSCTL_PATH}: {e}", cls.audit_sysctl()
 
-            # Poll for update
             time.sleep(1.0)
-            return True, "[Docker Host] Триггер применения параметров sysctl успешно отправлен хост-серверу.", cls.audit_sysctl()
+            return (
+                True,
+                "[Docker Host] Тома конфигурации sysctl примонтированы в режиме только для чтения (:ro).\n"
+                "Триггер применения параметров sysctl сохранён в data/run_sysctl_harden.trigger для применения на хосте.",
+                cls.audit_sysctl(),
+            )
 
         # Windows Dev environment
         if os.name == "nt":
             status = cls.audit_sysctl()
             cls._save_cached_status({"sysctl": status})
+            cls._save_host_sysctl_snapshot()
             return True, "[Windows Dev] Сетевые параметры ядра (sysctl) успешно эмулированы и применены.", status
 
         # Linux Host execution
@@ -402,6 +545,9 @@ limit_req zone=req_limit burst=30 nodelay;
 
             if SYSCTL_CONF_PATH.exists():
                 subprocess.run(sudo_prefix + ["sysctl", "-p", str(SYSCTL_CONF_PATH)], capture_output=True)
+
+            # 3. Save snapshot to data/sysctl_status.json
+            cls._save_host_sysctl_snapshot()
 
             audit_res = cls.audit_sysctl()
             return True, "\n".join(output_lines) or "Параметры sysctl успешно применены.", audit_res

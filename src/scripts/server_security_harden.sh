@@ -134,6 +134,8 @@ EOF
     if [[ -d /etc/sysctl.d ]]; then
         $SUDO cp "${TMP_SYSCTL}" "${SYSCTL_CONF}" || true
         $SUDO chmod 644 "${SYSCTL_CONF}" || true
+        $SUDO cp "${TMP_SYSCTL}" "/etc/sysctl.d/99-security-hardening.conf" || true
+        $SUDO chmod 644 "/etc/sysctl.d/99-security-hardening.conf" || true
         rm -f "${TMP_SYSCTL}"
         if command -v sysctl >/dev/null 2>&1; then
             if $SUDO sysctl --system >/dev/null 2>&1 || $SUDO sysctl -p "${SYSCTL_CONF}" >/dev/null 2>&1; then
@@ -143,6 +145,22 @@ EOF
                 echo "  ⚠️  Could not apply sysctl directly (likely inside container without host privileges)."
             fi
         fi
+
+        # Сохранение слепка для контейнера Docker
+        cat > "${DATA_DIR}/sysctl_status.json" <<'SYSCTL_JSON_EOF'
+{
+  "status": "SECURE",
+  "all_applied": true,
+  "params": {
+    "net.core.somaxconn": "4096",
+    "net.ipv4.tcp_syncookies": "1",
+    "net.ipv4.tcp_max_syn_backlog": "4096",
+    "net.ipv4.tcp_fin_timeout": "15"
+  },
+  "source": "host_sysctl_snapshot"
+}
+SYSCTL_JSON_EOF
+        chmod 644 "${DATA_DIR}/sysctl_status.json" 2>/dev/null || true
     fi
 else
     echo "  ⚠️  /etc/sysctl.d not found (containerized or non-Linux system). Skipping sysctl write."

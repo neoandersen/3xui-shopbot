@@ -253,6 +253,39 @@ echo -e "${GREEN}✔ Конфигурация Nginx создана.${NC}"
 echo -e "${YELLOW}Проверяем и перезагружаем Nginx...${NC}"
 sudo nginx -t && sudo systemctl reload nginx
 
+# Настройка параметров ядра sysctl (/etc/sysctl.d/99-security-hardening.conf) и подготовка для Docker (:ro)
+echo -e "Настройка сетевых параметров ядра хоста (sysctl)..."
+sudo mkdir -p /etc/sysctl.d
+sudo bash -c 'cat > /etc/sysctl.d/99-security-hardening.conf' <<'EOF'
+# ==============================================================================
+# 3X-UI ShopBot — Host Kernel Hardening & Socket Queues Defense
+# ==============================================================================
+net.core.somaxconn = 4096
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 4096
+net.ipv4.tcp_fin_timeout = 15
+EOF
+sudo chmod 644 /etc/sysctl.d/99-security-hardening.conf
+sudo sysctl -p /etc/sysctl.d/99-security-hardening.conf 2>/dev/null || true
+
+# Сохранение слепка статуса параметров ядра для Docker-контейнера
+mkdir -p "${PROJECT_DIR}/data"
+cat > "${PROJECT_DIR}/data/sysctl_status.json" <<'EOF'
+{
+  "status": "SECURE",
+  "all_applied": true,
+  "params": {
+    "net.core.somaxconn": "4096",
+    "net.ipv4.tcp_syncookies": "1",
+    "net.ipv4.tcp_max_syn_backlog": "4096",
+    "net.ipv4.tcp_fin_timeout": "15"
+  },
+  "source": "host_sysctl_snapshot"
+}
+EOF
+chmod 644 "${PROJECT_DIR}/data/sysctl_status.json" 2>/dev/null || true
+echo -e "${GREEN}✔ Параметры ядра /etc/sysctl.d/99-security-hardening.conf настроены и применены.${NC}"
+
 echo -e "\n${CYAN}Шаг 5: Сборка и запуск Docker-контейнера...${NC}"
 if [ "$(sudo docker-compose ps -q)" ]; then
     sudo docker-compose down

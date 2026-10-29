@@ -369,18 +369,42 @@
 - **UI карточка в `security.html`**:
   - «Защита от переполнения буферов (Nginx & Network Shield)» с динамическими индикаторами статуса, счётчиками 414/400/413/429 за 24ч, интерактивными кнопками наложения с подтверждением и терминальным блоком лога проверки `nginx -t`.
 
-### 12.5. Интеграция телеметрии Nginx в Docker-окружение
+### 12.5. Интеграция телеметрии Nginx и параметров ядра sysctl в Docker-окружение
 - **Проброс системных директорий хоста в `docker-compose.yml`**:
   ```yaml
-  volumes:
-    - .:/app/project
-    - /var/log/nginx:/var/log/nginx:ro
-    - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
+  services:
+    3xui-shopbot:
+      build: .
+      restart: unless-stopped
+      ports:
+        - '1488:1488'
+      volumes:
+        - .:/app/project
+        - /var/log/nginx:/var/log/nginx:ro
+        - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
+        - /etc/sysctl.d:/etc/sysctl.d:ro
+      container_name: 3xui-shopbot
+      deploy:
+        resources:
+          limits:
+            cpus: '0.70'      # Разрешаем использовать не более 70% ядра процессора
+            memory: 400M      # Жесткий лимит оперативной памяти в 400 Мегабайт
+      logging:
+        driver: "json-file"
+        options:
+          max-size: "10m"   # Ограничиваем лог-файл до 10 МБ
+          max-file: "3"     # Храним не больше 3 таких файлов
   ```
 - **Изоляция и безопасность (`:ro`)**:
   - Все хостовые каталоги монтируются строго в режиме только для чтения (`:ro`), предотвращая несанкционированную модификацию конфигурации или журналов хоста из контейнера.
+  - Лимиты ресурсов (`cpus: '0.70'`, `memory: 400M`) предотвращают деградацию хоста и OOM-сбои.
+  - Ротация журналов Docker (`json-file`, `max-size: 10m`, `max-file: 3`) защищает диск от переполнения.
+- **Гибридный аудит параметров ядра (Host Kernel Telemetry)**:
+  - Из-за изоляции сетевых пространств (network namespaces) контейнер Docker видит локальные значения виртуального сетевого моста (`net.ipv4.tcp_max_syn_backlog = 128`, `net.ipv4.tcp_fin_timeout = 60`), в то время как физический хост защищён значениями `4096` и `15`.
+  - Реализован гибридный механизм валидации: если локальный `/proc/sys` возвращает изолированные дефолты контейнера, `NginxHardeningService.audit_sysctl()` считывает конфигурационные файлы хоста из примонтированного `/etc/sysctl.d/` (`99-security-hardening.conf`, `99-neovpn-security.conf`) или слепок `data/sysctl_status.json`.
+  - При значениях $\ge 4096$ (для очереди SYN) и $\le 15$ (для таймаута FIN) параметры помечаются как `"ok": True` с указанием источника (`"source": "host_sysctl_conf"` или `"source": "host_sysctl_snapshot"`).
 - **Graceful Fallback & ENV-конфигурируемость**:
-  - Пути конфигурируются через переменные окружения (`NGINX_CONF_DIR`, `CONF_D_DIR`, `HARDENING_CONF_PATH`, `NGINX_ACCESS_LOG`, `NGINX_ERROR_LOG`) со стандартными дефолтами.
+  - Пути конфигурируются через переменные окружения (`NGINX_CONF_DIR`, `CONF_D_DIR`, `HARDENING_CONF_PATH`, `SYSCTL_D_DIR`, `SYSCTL_CONF_PATH`, `NGINX_ACCESS_LOG`, `NGINX_ERROR_LOG`) со стандартными дефолтами.
   - При отсутствии каталогов или журналов сервис логирует понятное предупреждение `logger.warning` и возвращает базовые безопасные метрики без падения приложения.
   - Запросы на изменение настроек изнутри изолированного контейнера формируют триггеры `run_nginx_harden.trigger` / `run_sysctl_harden.trigger` для хостового демона.
 

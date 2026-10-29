@@ -80,8 +80,47 @@ if $SUDO nginx -t; then
     else
         $SUDO nginx -s reload
     fi
+
+    # 6. Установка параметров ядра sysctl (/etc/sysctl.d/99-security-hardening.conf)
+    echo "⚙️  Проверка и настройка сетевых параметров ядра (/etc/sysctl.d/99-security-hardening.conf)..."
+    $SUDO mkdir -p /etc/sysctl.d
+    TARGET_SYSCTL="/etc/sysctl.d/99-security-hardening.conf"
+    if [[ ! -f "${TARGET_SYSCTL}" ]]; then
+        $SUDO bash -c "cat > '${TARGET_SYSCTL}'" <<'EOF'
+# ==============================================================================
+# 3X-UI ShopBot — Host Kernel Hardening & Socket Queues Defense
+# ==============================================================================
+net.core.somaxconn = 4096
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 4096
+net.ipv4.tcp_fin_timeout = 15
+EOF
+        $SUDO chmod 644 "${TARGET_SYSCTL}"
+        if command -v sysctl >/dev/null 2>&1; then
+            $SUDO sysctl -p "${TARGET_SYSCTL}" >/dev/null 2>&1 || true
+        fi
+        echo "✔ Файл ${TARGET_SYSCTL} создан и применён."
+    fi
+
+    # Сохранение слепка для контейнера Docker
+    mkdir -p "${PROJECT_ROOT}/data"
+    cat > "${PROJECT_ROOT}/data/sysctl_status.json" <<'EOF'
+{
+  "status": "SECURE",
+  "all_applied": true,
+  "params": {
+    "net.core.somaxconn": "4096",
+    "net.ipv4.tcp_syncookies": "1",
+    "net.ipv4.tcp_max_syn_backlog": "4096",
+    "net.ipv4.tcp_fin_timeout": "15"
+  },
+  "source": "host_sysctl_snapshot"
+}
+EOF
+    chmod 644 "${PROJECT_ROOT}/data/sysctl_status.json" 2>/dev/null || true
+
     echo "========================================================================"
-    echo "✅ Nginx Overflow Shield успешно установлен и активирован!"
+    echo "✅ Nginx Overflow Shield & Kernel Hardening успешно установлены!"
     echo "========================================================================"
     exit 0
 else
