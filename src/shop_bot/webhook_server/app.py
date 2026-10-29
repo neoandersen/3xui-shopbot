@@ -180,6 +180,11 @@ def create_webhook_app(bot_controller_instance):
         flash('Вы успешно вышли.', 'success')
         return redirect(url_for('login_page'))
 
+    @flask_app.route('/privacy', methods=['GET'])
+    @flask_app.route('/privacy.html', methods=['GET'])
+    def privacy_policy_page():
+        return render_template('privacy.html')
+
     def get_common_template_data():
         bot_status = _bot_controller.get_status()
         support_bot_status = _support_bot_controller.get_status()

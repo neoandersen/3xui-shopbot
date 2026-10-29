@@ -280,7 +280,7 @@ def initialize_db():
                 "panel_password": "admin",
                 "about_text": None,
                 "terms_url": None,
-                "privacy_url": None,
+                "privacy_url": "https://neo-vpn.click/privacy.html",
                 "support_user": None,
                 "support_text": None,
                 # Editable content
@@ -465,6 +465,13 @@ def initialize_db():
                     logging.info("Добавлена колонка is_deleted в таблицу user_keys")
             except Exception as e:
                 logging.warning(f"Ошибка при добавлении колонок в таблицу user_keys: {e}")
+
+            # Миграция: дефолтный URL политики конфиденциальности
+            try:
+                cursor.execute("UPDATE bot_settings SET value = 'https://neo-vpn.click/privacy.html' WHERE key = 'privacy_url' AND (value IS NULL OR value = '')")
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"Ошибка миграции privacy_url: {e}")
 
             # Безопасная авто-миграция: атрибуция и онбординг в таблицу users (docs/SHOPBOT_AI_AND_ATTRIBUTION_SPEC.md)
             try:

@@ -499,6 +499,14 @@ EOF
     echo "  -> Generated web audit report: ${AUDIT_HTML}"
 fi
 
+# Deploy Privacy Policy to landing directory
+PRIVACY_SRC="${PROJECT_ROOT}/deploy/landing/privacy.html"
+if [[ -f "${PRIVACY_SRC}" && -d "${LANDING_DIR}" ]]; then
+    $SUDO cp "${PRIVACY_SRC}" "${LANDING_DIR}/privacy.html" 2>/dev/null || true
+    $SUDO chmod 644 "${LANDING_DIR}/privacy.html" 2>/dev/null || true
+    echo "  -> Deployed Privacy Policy HTML: ${LANDING_DIR}/privacy.html"
+fi
+
 echo ""
 echo "========================================================================"
 echo "✅  HARDENING COMPLETE: Status ${STATUS_TEXT} (Score: ${SCORE}/100)"

@@ -57,6 +57,14 @@ if [ -f "$NGINX_CONF_FILE" ]; then
         echo -e "${GREEN}✔ Конфигурация Nginx уже содержит необходимые настройки.${NC}"
     fi
 
+    # Размещение/обновление Политики конфиденциальности в веб-каталоге
+    if [ -f "deploy/landing/privacy.html" ]; then
+        sudo mkdir -p /var/www/neo-vpn-landing
+        sudo cp "deploy/landing/privacy.html" /var/www/neo-vpn-landing/privacy.html
+        sudo chmod 644 /var/www/neo-vpn-landing/privacy.html
+        echo -e "${GREEN}✔ Файл /var/www/neo-vpn-landing/privacy.html обновлен.${NC}"
+    fi
+
     echo -e "\n${CYAN}Шаг 2: Пересборка и перезапуск Docker-контейнеров...${NC}"
     sudo docker-compose down --remove-orphans && sudo docker-compose up -d --build
     
@@ -247,6 +255,19 @@ if [ -f "$NGINX_HARDENING_SRC" ]; then
     sudo cp "$NGINX_HARDENING_SRC" /etc/nginx/conf.d/security_hardening.conf
     sudo chmod 644 /etc/nginx/conf.d/security_hardening.conf
     echo -e "${GREEN}✔ Файл /etc/nginx/conf.d/security_hardening.conf установлен.${NC}"
+fi
+
+# Размещение политики конфиденциальности в веб-каталоге Nginx
+sudo mkdir -p /var/www/neo-vpn-landing
+PRIVACY_SRC="${PROJECT_DIR}/deploy/landing/privacy.html"
+if [ ! -f "$PRIVACY_SRC" ]; then
+    PRIVACY_SRC="${PROJECT_DIR}/src/shop_bot/webhook_server/static/privacy.html"
+fi
+if [ -f "$PRIVACY_SRC" ]; then
+    echo -e "Размещение Политики конфиденциальности (/var/www/neo-vpn-landing/privacy.html)..."
+    sudo cp "$PRIVACY_SRC" /var/www/neo-vpn-landing/privacy.html
+    sudo chmod 644 /var/www/neo-vpn-landing/privacy.html
+    echo -e "${GREEN}✔ Файл /var/www/neo-vpn-landing/privacy.html размещен.${NC}"
 fi
 
 echo -e "${GREEN}✔ Конфигурация Nginx создана.${NC}"
