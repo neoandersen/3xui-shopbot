@@ -241,6 +241,7 @@ def register_enhanced_admin_routes(
     app: Flask,
     login_required: Callable,
     get_common_template_data: Callable,
+    csrf: Optional[Any] = None,
 ) -> None:
     """Register /admin/security and related API endpoints on the Flask application."""
 

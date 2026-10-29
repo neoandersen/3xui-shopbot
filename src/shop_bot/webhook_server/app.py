@@ -133,10 +133,68 @@ def create_webhook_app(bot_controller_instance):
         static_folder='static'
     )
     
-    # SECRET_KEY из окружения или сгенерированный на лету (без хардкода)
-    flask_app.config['SECRET_KEY'] = os.getenv('SHOPBOT_SECRET_KEY') or secrets.token_hex(32)
+    def get_persistent_secret_key() -> str:
+        """Получить персистентный SECRET_KEY для Flask сессий и CSRF.
+        1. Проверяет переменные окружения SHOPBOT_SECRET_KEY или FLASK_SECRET_KEY.
+        2. Проверяет значение в базе данных через get_setting('flask_secret_key').
+        3. Проверяет файл на диске: data/.flask_secret.
+        4. Если ключ не найден — генерирует новый, сохраняет в БД и файл, и возвращает его.
+        """
+        env_secret = os.getenv('SHOPBOT_SECRET_KEY') or os.getenv('FLASK_SECRET_KEY')
+        if env_secret and env_secret.strip():
+            return env_secret.strip()
+
+        try:
+            db_secret = get_setting('flask_secret_key')
+            if db_secret and str(db_secret).strip():
+                return str(db_secret).strip()
+        except Exception as e:
+            logger.warning(f"Не удалось получить flask_secret_key из БД: {e}")
+
+        project_root = Path("/app/project") if Path("/app/project").exists() else Path(__file__).resolve().parent.parent.parent.parent
+        data_dir = project_root / "data"
+        secret_file = data_dir / ".flask_secret"
+        if secret_file.exists():
+            try:
+                file_secret = secret_file.read_text(encoding='utf-8').strip()
+                if file_secret:
+                    try:
+                        update_setting('flask_secret_key', file_secret)
+                    except Exception:
+                        pass
+                    return file_secret
+            except Exception as e:
+                logger.warning(f"Не удалось прочитать {secret_file}: {e}")
+
+        new_secret = secrets.token_hex(32)
+
+        try:
+            update_setting('flask_secret_key', new_secret)
+        except Exception as e:
+            logger.warning(f"Не удалось сохранить flask_secret_key в БД: {e}")
+
+        try:
+            data_dir.mkdir(parents=True, exist_ok=True)
+            secret_file.write_text(new_secret, encoding='utf-8')
+        except Exception as e:
+            logger.warning(f"Не удалось записать в {secret_file}: {e}")
+
+        return new_secret
+
+    # Персистентный SECRET_KEY (сохраняется в БД и data/.flask_secret, не сбрасывается при рестартах)
+    flask_app.config['SECRET_KEY'] = get_persistent_secret_key()
     from datetime import timedelta
     flask_app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
+
+    # ProxyFix для корректной обработки HTTPS и Nginx прокси (X-Forwarded-Proto, X-Forwarded-For, X-Forwarded-Host)
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    flask_app.wsgi_app = ProxyFix(flask_app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+    # Настройки CSRF и сессий
+    flask_app.config['WTF_CSRF_TIME_LIMIT'] = None  # Токен не протухает при длительном открытии вкладки
+    flask_app.config['WTF_CSRF_SSL_STRICT'] = False # Исключить ложные срабатывания при SSL offloading через Nginx
+    flask_app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    flask_app.config['SESSION_COOKIE_HTTPONLY'] = True
 
     # CSRF защита для всех POST форм в панели; вебхуки будут исключены
     csrf = CSRFProtect()
@@ -323,7 +381,7 @@ def create_webhook_app(bot_controller_instance):
         )
 
     # --- Модуль безопасности периметра и харденинга (/admin/security) ---
-    enhanced_admin_routes.register_enhanced_admin_routes(flask_app, login_required, get_common_template_data)
+    enhanced_admin_routes.register_enhanced_admin_routes(flask_app, login_required, get_common_template_data, csrf=csrf)
 
     @flask_app.route('/dashboard/run-speedtests', methods=['POST'])
     @login_required
@@ -2116,6 +2174,7 @@ def create_webhook_app(bot_controller_instance):
         return render_template('button_constructor.html', **template_data)
 
     # --- Button Constructor API ---
+    @csrf.exempt
     @flask_app.route('/api/button-configs', methods=['GET', 'POST'])
     @login_required
     def button_configs_api():
@@ -2150,6 +2209,7 @@ def create_webhook_app(bot_controller_instance):
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
 
+    @csrf.exempt
     @flask_app.route('/api/button-configs/<int:button_id>', methods=['PUT', 'DELETE'])
     @login_required
     def button_config_api(button_id):
@@ -2176,6 +2236,7 @@ def create_webhook_app(bot_controller_instance):
             except Exception as e:
                 return jsonify({"success": False, "error": str(e)}), 500
 
+    @csrf.exempt
     @flask_app.route('/api/button-configs/<menu_type>/reorder', methods=['POST'])
     @login_required
     def button_configs_reorder_api(menu_type):
@@ -2191,6 +2252,7 @@ def create_webhook_app(bot_controller_instance):
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
     
+    @csrf.exempt
     @flask_app.route('/api/button-configs/force-migration', methods=['POST'])
     @login_required
     def force_button_migration_api():
