@@ -32,22 +32,24 @@ def calculate_payment_sign(
     pay_id: str,
     amount: str,
     currency: Optional[str] = None,
-    merchant_id: Optional[str] = None,
-    secret_key: Optional[str] = None
+    project_id: Optional[str] = None,
+    secret_key: Optional[str] = None,
+    merchant_id: Optional[str] = None
 ) -> str:
     service = get_anypay_service()
-    merchant_id = str(merchant_id if merchant_id is not None else service.project_id).strip()
-    secret_key = str(secret_key if secret_key is not None else service.secret_key).strip()
-    pay_id = str(pay_id).strip()
-    currency = str(currency or service.currency).strip().upper()
-    amount = str(amount).strip()
+    proj = project_id if project_id is not None else merchant_id
+    project_id_val = str(proj if proj is not None else service.project_id).strip()
+    secret_key_val = str(secret_key if secret_key is not None else service.secret_key).strip()
+    pay_id_val = str(pay_id).strip()
+    currency_val = str(currency or service.currency).strip().upper()
+    amount_val = str(amount).strip()
 
     return service.calculate_payment_sign(
-        pay_id=pay_id,
-        amount=amount,
-        currency=currency,
-        merchant_id=merchant_id,
-        secret_key=secret_key
+        pay_id=pay_id_val,
+        amount=amount_val,
+        currency=currency_val,
+        project_id=project_id_val,
+        secret_key=secret_key_val
     )
 
 def generate_payment_url(
@@ -57,37 +59,40 @@ def generate_payment_url(
     currency: Optional[str] = None,
     success_url: Optional[str] = None,
     fail_url: Optional[str] = None,
-    merchant_id: Optional[str] = None,
-    secret_key: Optional[str] = None
+    project_id: Optional[str] = None,
+    secret_key: Optional[str] = None,
+    merchant_id: Optional[str] = None
 ) -> Optional[str]:
     service = get_anypay_service()
-    merchant_id = str(merchant_id if merchant_id is not None else service.project_id).strip()
-    secret_key = str(secret_key if secret_key is not None else service.secret_key).strip()
-    pay_id = str(pay_id).strip()
-    currency = str(currency or service.currency).strip().upper()
+    proj = project_id if project_id is not None else merchant_id
+    project_id_val = str(proj if proj is not None else service.project_id).strip()
+    secret_key_val = str(secret_key if secret_key is not None else service.secret_key).strip()
+    pay_id_val = str(pay_id).strip()
+    currency_val = str(currency or service.currency).strip().upper()
 
     result = service.generate_payment_url(
-        pay_id=pay_id,
+        pay_id=pay_id_val,
         amount=amount,
         description=str(description).strip(),
-        currency=currency,
+        currency=currency_val,
         success_url=success_url,
         fail_url=fail_url,
-        merchant_id=merchant_id,
-        secret_key=secret_key
+        project_id=project_id_val,
+        secret_key=secret_key_val
+    )
     if isinstance(result, tuple):
         result = result[1] if len(result) > 1 and result[0] else None
 
     amount_str = f"{float(amount):.2f}".strip()
-    secret_key_masked = f"{secret_key[:4]}...{secret_key[-4:]}" if len(secret_key) >= 8 else "****"
+    secret_key_masked = f"{secret_key_val[:4]}...{secret_key_val[-4:]}" if len(secret_key_val) >= 8 else "****"
     sign = service.calculate_payment_sign(
-        pay_id=pay_id,
+        pay_id=pay_id_val,
         amount=amount_str,
-        currency=currency,
-        merchant_id=merchant_id,
-        secret_key=secret_key
+        currency=currency_val,
+        project_id=project_id_val,
+        secret_key=secret_key_val
     )
-    logger.info(f"[AnyPay Debug] raw_string_for_sign: '{currency}:{amount_str}:{secret_key_masked}:{merchant_id}:{pay_id}'")
+    logger.info(f"[AnyPay Debug] raw_string_for_sign: '{currency_val}:{amount_str}:{secret_key_masked}:{project_id_val}:{pay_id_val}'")
     logger.info(f"[AnyPay Debug] generated_sign: {sign}")
     logger.info(f"[AnyPay Debug] full_payment_url: {result}")
 
@@ -97,7 +102,7 @@ def verify_notification_signature(
     data: Dict[str, Any],
     secret_key: Optional[str] = None
 ) -> bool:
-    merchant_id = str(data.get("merchant_id") or "").strip()
+    project_id = str(data.get("project_id") or data.get("merchant_id") or "").strip()
     secret_key = str(secret_key if secret_key is not None else (get_setting("anypay_secret_key") or os.getenv("ANYPAY_SECRET_KEY", ""))).strip()
     pay_id = str(data.get("pay_id") or "").strip()
     currency = str(data.get("currency") or "").strip().upper()
