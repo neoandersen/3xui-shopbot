@@ -248,8 +248,9 @@
                     </div>
                     <div class="text-muted small mt-1">
                         414: <strong id="widget-cnt-414">{{ nginx_status.anomalies_24h.code_414 if nginx_status and nginx_status.anomalies_24h else 0 }}</strong> |
-                        400/494: <strong id="widget-cnt-400">{{ (nginx_status.anomalies_24h.code_400 + nginx_status.anomalies_24h.code_494) if nginx_status and nginx_status.anomalies_24h else 0 }}</strong> |
-                        413: <strong id="widget-cnt-413">{{ nginx_status.anomalies_24h.code_413 if nginx_status and nginx_status.anomalies_24h else 0 }}</strong>
+                        400/494: <strong id="widget-cnt-400">{{ ((nginx_status.anomalies_24h.code_400 or 0) + (nginx_status.anomalies_24h.code_494 or 0)) if nginx_status and nginx_status.anomalies_24h else 0 }}</strong> |
+                        413: <strong id="widget-cnt-413">{{ nginx_status.anomalies_24h.code_413 if nginx_status and nginx_status.anomalies_24h else 0 }}</strong> |
+                        429: <strong id="widget-cnt-429">{{ nginx_status.anomalies_24h.code_429 if nginx_status and nginx_status.anomalies_24h else 0 }}</strong>
                     </div>
                 </div>
             </div>
@@ -549,6 +550,7 @@
         const cnt414 = document.getElementById('widget-cnt-414');
         const cnt400 = document.getElementById('widget-cnt-400');
         const cnt413 = document.getElementById('widget-cnt-413');
+        const cnt429 = document.getElementById('widget-cnt-429');
 
         if (data.nginx) {
             const isHardened = data.nginx.hardened;
@@ -577,6 +579,7 @@
             if (cnt414) cnt414.textContent = data.anomalies_24h.code_414 || 0;
             if (cnt400) cnt400.textContent = (data.anomalies_24h.code_400 || 0) + (data.anomalies_24h.code_494 || 0);
             if (cnt413) cnt413.textContent = data.anomalies_24h.code_413 || 0;
+            if (cnt429) cnt429.textContent = data.anomalies_24h.code_429 || 0;
         }
     }
 

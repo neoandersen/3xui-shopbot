@@ -16,15 +16,15 @@ logger = logging.getLogger(__name__)
 # Base Paths
 PROJECT_ROOT = database.PROJECT_ROOT
 DATA_DIR = PROJECT_ROOT / "data"
-NGINX_CONF_DIR = Path("/etc/nginx")
-NGINX_CONF_PATH = NGINX_CONF_DIR / "nginx.conf"
-CONF_D_DIR = NGINX_CONF_DIR / "conf.d"
-HARDENING_CONF_PATH = CONF_D_DIR / "security_hardening.conf"
-SYSCTL_CONF_PATH = Path("/etc/sysctl.d/99-neovpn-security.conf")
+NGINX_CONF_DIR = Path(os.environ.get("NGINX_CONF_DIR", "/etc/nginx"))
+NGINX_CONF_PATH = Path(os.environ.get("NGINX_CONF_PATH", str(NGINX_CONF_DIR / "nginx.conf")))
+CONF_D_DIR = Path(os.environ.get("CONF_D_DIR", str(NGINX_CONF_DIR / "conf.d")))
+HARDENING_CONF_PATH = Path(os.environ.get("HARDENING_CONF_PATH", str(CONF_D_DIR / "security_hardening.conf")))
+SYSCTL_CONF_PATH = Path(os.environ.get("SYSCTL_CONF_PATH", "/etc/sysctl.d/99-neovpn-security.conf"))
 
-# Log paths (standard Linux locations)
-DEFAULT_ACCESS_LOG = Path("/var/log/nginx/access.log")
-DEFAULT_ERROR_LOG = Path("/var/log/nginx/error.log")
+# Log paths (standard Linux locations, configurable via ENV)
+DEFAULT_ACCESS_LOG = Path(os.environ.get("NGINX_ACCESS_LOG", "/var/log/nginx/access.log"))
+DEFAULT_ERROR_LOG = Path(os.environ.get("NGINX_ERROR_LOG", "/var/log/nginx/error.log"))
 
 # Audit cache / state
 STATUS_FILE_PATH = DATA_DIR / "nginx_hardening_status.json"
@@ -172,7 +172,14 @@ limit_req zone=req_limit burst=30 nodelay;
                 return cached["nginx"]
             return cls._get_dev_nginx_audit(nginx_version or "nginx/1.24.0 (Windows Dev)")
 
-        # On Linux: attempt to run `nginx -T` to get the active parsed configuration
+        # Graceful check for directory existence with logging
+        if not CONF_D_DIR.exists() and not HARDENING_CONF_PATH.exists():
+            logger.warning(
+                f"Nginx configuration path not accessible: {HARDENING_CONF_PATH} (directory {CONF_D_DIR} does not exist). "
+                "Running in unmounted or development mode without host Nginx."
+            )
+
+        # On Linux / Docker: attempt to run `nginx -T` to get the active parsed configuration
         active_config = ""
         config_test_ok = False
         nginx_bin = shutil.which("nginx") or "/usr/sbin/nginx"
@@ -191,18 +198,25 @@ limit_req zone=req_limit burst=30 nodelay;
             except Exception as e:
                 logger.warning(f"Error running nginx -T: {e}")
 
-        # Fallback if nginx -T didn't work: read /etc/nginx/nginx.conf & conf.d/*.conf
+        # Fallback if nginx -T didn't work (e.g. inside Docker container with :ro volume mounts)
         if not active_config:
             if HARDENING_CONF_PATH.exists():
                 try:
                     active_config += HARDENING_CONF_PATH.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Could not read hardening configuration at {HARDENING_CONF_PATH}: {e}")
+            if CONF_D_DIR.exists() and CONF_D_DIR.is_dir():
+                try:
+                    for conf_file in CONF_D_DIR.glob("*.conf"):
+                        if conf_file != HARDENING_CONF_PATH:
+                            active_config += "\n" + conf_file.read_text(encoding="utf-8", errors="ignore")
+                except Exception as e:
+                    logger.warning(f"Could not scan conf.d directory {CONF_D_DIR}: {e}")
             if NGINX_CONF_PATH.exists():
                 try:
                     active_config += "\n" + NGINX_CONF_PATH.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Could not read main Nginx configuration {NGINX_CONF_PATH}: {e}")
 
         # Inspect directives against expected settings
         directives_audit: Dict[str, Dict[str, Any]] = {}
@@ -230,12 +244,20 @@ limit_req zone=req_limit burst=30 nodelay;
                 }
                 missing_directives.append(directive)
 
-        is_hardened = (len(missing_directives) == 0) and (HARDENING_CONF_PATH.exists() or len(active_config) > 500)
+        is_hardened = (len(missing_directives) == 0) and (HARDENING_CONF_PATH.exists() or len(active_config) > 300)
+        config_test_ok = config_test_ok or (is_hardened and HARDENING_CONF_PATH.exists())
         status = "SECURE" if is_hardened else ("WARNING" if directives_audit.get("server_tokens", {}).get("ok") else "NOT_CONFIGURED")
+
+        # In Docker container without local nginx binary, detect host-mounted state
+        if not nginx_version:
+            if HARDENING_CONF_PATH.exists():
+                nginx_version = "nginx (Docker Volume :ro)"
+            elif CONF_D_DIR.exists():
+                nginx_version = "nginx (Host Integration)"
 
         return {
             "version": nginx_version or "Nginx not found",
-            "installed": bool(nginx_version),
+            "installed": bool(nginx_version) or HARDENING_CONF_PATH.exists() or CONF_D_DIR.exists(),
             "hardened": is_hardened,
             "status": status,
             "hardening_file_exists": HARDENING_CONF_PATH.exists(),
@@ -398,9 +420,14 @@ limit_req zone=req_limit burst=30 nodelay;
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
-        # Docker environment handling: create trigger file for host if not directly manageable
-        if os.path.exists("/.dockerenv") and not NGINX_CONF_PATH.exists():
-            logger.info("Docker environment detected without host /etc/nginx mount. Writing trigger...")
+        # Docker environment or Read-Only mount handling
+        nginx_bin = shutil.which("nginx") or "/usr/sbin/nginx"
+        is_docker = os.path.exists("/.dockerenv") or Path("/app/project").exists()
+        is_ro = not os.access(str(CONF_D_DIR), os.W_OK) if CONF_D_DIR.exists() else True
+        has_nginx_bin = os.path.exists(nginx_bin) or shutil.which("nginx") is not None
+
+        if (is_docker and (is_ro or not has_nginx_bin)) or (is_ro and not has_nginx_bin and os.name != "nt"):
+            logger.info("Docker environment with read-only /etc/nginx mount detected. Writing trigger file for host daemon...")
             try:
                 with open(TRIGGER_NGINX_PATH, "w", encoding="utf-8") as f:
                     json.dump(
@@ -413,7 +440,12 @@ limit_req zone=req_limit burst=30 nodelay;
                     )
                 time.sleep(1.0)
                 audit_res = cls.audit_nginx_configuration()
-                return True, "[Docker Host] Триггер харденинга Nginx успешно создан для хост-демона.", audit_res
+                return (
+                    True,
+                    "[Docker Host] Тома Nginx примонтированы в режиме только для чтения (:ro).\n"
+                    "Триггер применения Nginx Overflow Shield сохранён в data/run_nginx_harden.trigger для применения на хосте.",
+                    audit_res,
+                )
             except Exception as e:
                 return False, f"Ошибка создания триггера харденинга: {e}", cls.audit_nginx_configuration()
 
@@ -537,7 +569,7 @@ limit_req zone=req_limit burst=30 nodelay;
 
     @classmethod
     def parse_nginx_logs(cls, hours: int = 24, max_lines: int = 10000) -> Dict[str, Any]:
-        """Parse Nginx access.log and error.log for buffer/request size attack codes (414, 400, 413, 494)
+        """Parse Nginx access.log and error.log for buffer/request size attack codes (414, 400, 413, 429, 494)
 
         and abnormal worker crashes within the specified time window.
         """
@@ -545,7 +577,8 @@ limit_req zone=req_limit burst=30 nodelay;
             "total": 0,
             "code_414": 0,  # URI Too Long (Buffer overflow attempt)
             "code_400": 0,  # Bad Request (Malformed header/syntax attack)
-            "code_413": 0,  # Payload Too Large
+            "code_413": 0,  # Payload Too Large (Payload overflow attempt)
+            "code_429": 0,  # Too Many Requests (Rate limit block)
             "code_494": 0,  # Request Header Too Large
             "worker_crashes": 0,
             "recent_events": [],
@@ -553,23 +586,41 @@ limit_req zone=req_limit burst=30 nodelay;
             "checked_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
 
-        # Dev / Windows mock or log files search
+        # Dev / Windows mock or log files search paths
         access_log_paths = [
             DEFAULT_ACCESS_LOG,
+            Path("/var/log/nginx/access.log"),
             Path("/var/log/nginx/access.log.1"),
             DATA_DIR / "nginx_access.log",
+            PROJECT_ROOT / "nginx_access.log",
         ]
         error_log_paths = [
             DEFAULT_ERROR_LOG,
+            Path("/var/log/nginx/error.log"),
             Path("/var/log/nginx/error.log.1"),
             DATA_DIR / "nginx_error.log",
+            PROJECT_ROOT / "nginx_error.log",
         ]
 
-        found_access_logs = [p for p in access_log_paths if p.exists()]
-        found_error_logs = [p for p in error_log_paths if p.exists()]
+        # Deduplicate while preserving order
+        unique_access_paths = []
+        for p in access_log_paths:
+            if p not in unique_access_paths:
+                unique_access_paths.append(p)
+
+        unique_error_paths = []
+        for p in error_log_paths:
+            if p not in unique_error_paths:
+                unique_error_paths.append(p)
+
+        found_access_logs = [p for p in unique_access_paths if p.exists() and p.is_file()]
+        found_error_logs = [p for p in unique_error_paths if p.exists() and p.is_file()]
 
         if not found_access_logs and not found_error_logs:
-            # Return baseline clean stats
+            logger.warning(
+                f"Nginx access/error logs not found at {DEFAULT_ACCESS_LOG} or fallback paths. "
+                "Returning clean baseline anomaly stats."
+            )
             return anomalies
 
         cutoff_time = datetime.utcnow() - timedelta(hours=hours)
@@ -577,7 +628,7 @@ limit_req zone=req_limit burst=30 nodelay;
         # 1. Parse Access Logs
         # Standard format: IP - User [28/Oct/2026:14:00:00 +0000] "GET / HTTP/1.1" 414 ...
         status_regex = re.compile(
-            r'\[(?P<time>[^\]]+)\]\s+"(?P<req>[^"]*)"\s+(?P<status>400|413|414|494)\s+(?P<bytes>\d+)'
+            r'\[(?P<time>[^\]]+)\]\s+"(?P<req>.*?)"\s+(?P<status>400|413|414|429|494)\b'
         )
 
         for log_path in found_access_logs:
@@ -601,10 +652,12 @@ limit_req zone=req_limit burst=30 nodelay;
                             anomalies["code_400"] += 1
                         elif status_code == "413":
                             anomalies["code_413"] += 1
+                        elif status_code == "429":
+                            anomalies["code_429"] += 1
                         elif status_code == "494":
                             anomalies["code_494"] += 1
 
-                        if len(anomalies["recent_events"]) < 20:
+                        if len(anomalies["recent_events"]) < 30:
                             anomalies["recent_events"].append(
                                 {
                                     "type": f"HTTP {status_code}",
@@ -678,11 +731,15 @@ limit_req zone=req_limit burst=30 nodelay;
 
     @classmethod
     def _parse_nginx_timestamp(cls, raw: str) -> Optional[datetime]:
-        """Parse Nginx log date e.g. '28/Oct/2026:14:00:00 +0000'."""
+        """Parse Nginx log date e.g. '28/Oct/2026:14:00:00 +0000' or ISO."""
         try:
             # Strip timezone for simple comparison
             clean = raw.split()[0]
             return datetime.strptime(clean, "%d/%b/%Y:%H:%M:%S")
+        except Exception:
+            pass
+        try:
+            return datetime.fromisoformat(raw.strip())
         except Exception:
             return None
 

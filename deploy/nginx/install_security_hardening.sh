@@ -44,8 +44,16 @@ if ! command -v nginx >/dev/null 2>&1; then
     exit 1
 fi
 
-# 1. Создание целевого каталога
-$SUDO mkdir -p "${TARGET_DIR}"
+# 1. Создание целевых каталогов и журналов (для хоста и проброса в Docker :ro)
+$SUDO mkdir -p "${TARGET_DIR}" /var/log/nginx
+if [[ ! -f /var/log/nginx/access.log ]]; then
+    $SUDO touch /var/log/nginx/access.log
+    $SUDO chmod 644 /var/log/nginx/access.log 2>/dev/null || true
+fi
+if [[ ! -f /var/log/nginx/error.log ]]; then
+    $SUDO touch /var/log/nginx/error.log
+    $SUDO chmod 644 /var/log/nginx/error.log 2>/dev/null || true
+fi
 
 # 2. Бэкап существующего файла, если он уже присутствует
 BACKUP_FILE=""

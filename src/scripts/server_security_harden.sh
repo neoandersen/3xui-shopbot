@@ -277,7 +277,13 @@ if command -v nginx >/dev/null 2>&1; then
     echo ""
     echo "🛡️  Configuring Nginx Overflow Shield (/etc/nginx/conf.d/security_hardening.conf)..."
     NGINX_CONF_D="/etc/nginx/conf.d"
-    $SUDO mkdir -p "${NGINX_CONF_D}" 2>/dev/null || true
+    $SUDO mkdir -p "${NGINX_CONF_D}" /var/log/nginx 2>/dev/null || true
+    if [[ ! -f /var/log/nginx/access.log ]]; then
+        $SUDO touch /var/log/nginx/access.log 2>/dev/null || true
+    fi
+    if [[ ! -f /var/log/nginx/error.log ]]; then
+        $SUDO touch /var/log/nginx/error.log 2>/dev/null || true
+    fi
     NGINX_SEC_FILE="${NGINX_CONF_D}/security_hardening.conf"
 
     STATIC_CONF="${PROJECT_ROOT}/deploy/nginx/security_hardening.conf"

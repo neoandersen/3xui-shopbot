@@ -233,14 +233,17 @@ if [ ! -f "$NGINX_ENABLED_FILE" ]; then
     sudo ln -s $NGINX_CONF_FILE $NGINX_ENABLED_FILE
 fi
 
-# Установка Nginx Overflow Shield (security_hardening.conf)
+# Установка Nginx Overflow Shield (security_hardening.conf) и подготовка каталогов для Docker
+sudo mkdir -p /etc/nginx/conf.d /var/log/nginx
+sudo touch /var/log/nginx/access.log /var/log/nginx/error.log
+sudo chmod 644 /var/log/nginx/access.log /var/log/nginx/error.log 2>/dev/null || true
+
 NGINX_HARDENING_SRC="${PROJECT_DIR}/deploy/nginx/security_hardening.conf"
 if [ ! -f "$NGINX_HARDENING_SRC" ]; then
     NGINX_HARDENING_SRC="${PROJECT_DIR}/src/shop_bot/config/security_hardening.conf"
 fi
 if [ -f "$NGINX_HARDENING_SRC" ]; then
     echo -e "Установка Nginx Overflow Shield (/etc/nginx/conf.d/security_hardening.conf)..."
-    sudo mkdir -p /etc/nginx/conf.d
     sudo cp "$NGINX_HARDENING_SRC" /etc/nginx/conf.d/security_hardening.conf
     sudo chmod 644 /etc/nginx/conf.d/security_hardening.conf
     echo -e "${GREEN}✔ Файл /etc/nginx/conf.d/security_hardening.conf установлен.${NC}"
