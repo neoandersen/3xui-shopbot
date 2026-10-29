@@ -57,12 +57,17 @@ if [ -f "$NGINX_CONF_FILE" ]; then
         echo -e "${GREEN}✔ Конфигурация Nginx уже содержит необходимые настройки.${NC}"
     fi
 
-    # Размещение/обновление Политики конфиденциальности в веб-каталоге
+    # Размещение/обновление Политики конфиденциальности в веб-каталогах Nginx (/var/www/sub и /var/www/neo-vpn-landing)
     if [ -f "deploy/landing/privacy.html" ]; then
         sudo mkdir -p /var/www/neo-vpn-landing
         sudo cp "deploy/landing/privacy.html" /var/www/neo-vpn-landing/privacy.html
         sudo chmod 644 /var/www/neo-vpn-landing/privacy.html
-        echo -e "${GREEN}✔ Файл /var/www/neo-vpn-landing/privacy.html обновлен.${NC}"
+        if [ -d "/var/www/sub" ]; then
+            sudo cp "deploy/landing/privacy.html" /var/www/sub/privacy.html
+            sudo chmod 644 /var/www/sub/privacy.html
+            sudo chown www-data:www-data /var/www/sub/privacy.html 2>/dev/null || true
+        fi
+        echo -e "${GREEN}✔ Политика конфиденциальности privacy.html обновлена в Document Root Nginx.${NC}"
     fi
 
     echo -e "\n${CYAN}Шаг 2: Пересборка и перезапуск Docker-контейнеров...${NC}"
@@ -257,17 +262,22 @@ if [ -f "$NGINX_HARDENING_SRC" ]; then
     echo -e "${GREEN}✔ Файл /etc/nginx/conf.d/security_hardening.conf установлен.${NC}"
 fi
 
-# Размещение политики конфиденциальности в веб-каталоге Nginx
+# Размещение политики конфиденциальности в веб-каталогах Nginx (/var/www/sub и /var/www/neo-vpn-landing)
 sudo mkdir -p /var/www/neo-vpn-landing
 PRIVACY_SRC="${PROJECT_DIR}/deploy/landing/privacy.html"
 if [ ! -f "$PRIVACY_SRC" ]; then
     PRIVACY_SRC="${PROJECT_DIR}/src/shop_bot/webhook_server/static/privacy.html"
 fi
 if [ -f "$PRIVACY_SRC" ]; then
-    echo -e "Размещение Политики конфиденциальности (/var/www/neo-vpn-landing/privacy.html)..."
+    echo -e "Размещение Политики конфиденциальности в веб-каталогах Nginx..."
     sudo cp "$PRIVACY_SRC" /var/www/neo-vpn-landing/privacy.html
     sudo chmod 644 /var/www/neo-vpn-landing/privacy.html
-    echo -e "${GREEN}✔ Файл /var/www/neo-vpn-landing/privacy.html размещен.${NC}"
+    if [ -d "/var/www/sub" ]; then
+        sudo cp "$PRIVACY_SRC" /var/www/sub/privacy.html
+        sudo chmod 644 /var/www/sub/privacy.html
+        sudo chown www-data:www-data /var/www/sub/privacy.html 2>/dev/null || true
+    fi
+    echo -e "${GREEN}✔ Файл privacy.html размещен в веб-каталогах Nginx.${NC}"
 fi
 
 echo -e "${GREEN}✔ Конфигурация Nginx создана.${NC}"
