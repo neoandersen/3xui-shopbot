@@ -47,13 +47,20 @@ class AnyPayService:
         self,
         pay_id: str,
         amount: str,
-        currency: Optional[str] = None
+        currency: Optional[str] = None,
+        merchant_id: Optional[str] = None,
+        secret_key: Optional[str] = None
     ) -> str:
         """
         sign = hashlib.sha256(f"{currency}:{amount}:{secret_key}:{merchant_id}:{pay_id}".encode('utf-8')).hexdigest()
         """
-        curr = (currency or self.currency).strip().upper()
-        sign_source = f"{curr}:{amount}:{self.secret_key}:{self.project_id}:{pay_id}"
+        merchant_id = str(merchant_id if merchant_id is not None else self.project_id).strip()
+        secret_key = str(secret_key if secret_key is not None else self.secret_key).strip()
+        pay_id = str(pay_id).strip()
+        currency = str(currency or self.currency).strip().upper()
+        amount = str(amount).strip()
+
+        sign_source = f"{currency}:{amount}:{secret_key}:{merchant_id}:{pay_id}"
         return hashlib.sha256(sign_source.encode("utf-8")).hexdigest()
 
     def generate_payment_url(
@@ -63,26 +70,39 @@ class AnyPayService:
         description: str = "Оплата подписки NeoVPN",
         currency: Optional[str] = None,
         success_url: Optional[str] = None,
-        fail_url: Optional[str] = None
+        fail_url: Optional[str] = None,
+        merchant_id: Optional[str] = None,
+        secret_key: Optional[str] = None
     ) -> Tuple[bool, Optional[str]]:
-        if not self.is_configured():
+        merchant_id = str(merchant_id if merchant_id is not None else self.project_id).strip()
+        secret_key = str(secret_key if secret_key is not None else self.secret_key).strip()
+        pay_id = str(pay_id).strip()
+        currency = str(currency or self.currency).strip().upper()
+
+        if not (merchant_id and secret_key):
             logger.error("AnyPay не настроен: отсутствует project_id или secret_key")
             return False, None
 
-        curr = (currency or self.currency).strip().upper()
-        amount_str = f"{float(amount):.2f}"
-        sign = self.calculate_payment_sign(pay_id=str(pay_id), amount=amount_str, currency=curr)
+        amount_str = f"{float(amount):.2f}".strip()
+        sign = self.calculate_payment_sign(
+            pay_id=pay_id,
+            amount=amount_str,
+            currency=currency,
+            merchant_id=merchant_id,
+            secret_key=secret_key
+        )
 
         default_redirect = self.get_bot_url()
+        desc = str(description or f"Оплата заказа #{pay_id}").strip()
         params = {
-            "merchant_id": self.project_id,
-            "pay_id": str(pay_id),
+            "merchant_id": merchant_id,
+            "pay_id": pay_id,
             "amount": amount_str,
-            "currency": curr,
-            "desc": description or f"Оплата заказа #{pay_id}",
-            "success_url": success_url or default_redirect,
-            "fail_url": fail_url or default_redirect,
-            "sign": sign
+            "currency": currency,
+            "desc": desc,
+            "success_url": str(success_url or default_redirect).strip(),
+            "fail_url": str(fail_url or default_redirect).strip(),
+            "sign": sign.strip()
         }
 
         query_string = urllib.parse.urlencode(params)
@@ -97,13 +117,15 @@ class AnyPayService:
         """
         expected_sign = hashlib.sha256(f"{currency}:{amount}:{pay_id}:{merchant_id}:{status}:{secret_key}".encode('utf-8')).hexdigest()
         """
+        merchant_id = str(data.get("merchant_id") or "").strip()
+        secret_key = str(secret_key or "").strip()
+        pay_id = str(data.get("pay_id") or "").strip()
+        currency = str(data.get("currency") or "").strip().upper()
+
         if not secret_key:
             return False
 
-        currency = str(data.get("currency") or "").strip().upper()
         amount = str(data.get("amount") or "").strip()
-        pay_id = str(data.get("pay_id") or "").strip()
-        merchant_id = str(data.get("merchant_id") or "").strip()
         status = str(data.get("status") or "").strip()
         sign = str(data.get("sign") or "").strip()
 
@@ -111,7 +133,7 @@ class AnyPayService:
             logger.warning(f"AnyPay IPN: не все обязательные параметры переданы: {data}")
             return False
 
-        sign_source = f"{currency}:{amount}:{pay_id}:{merchant_id}:{status}:{secret_key.strip()}"
+        sign_source = f"{currency}:{amount}:{pay_id}:{merchant_id}:{status}:{secret_key}"
         expected_sign = hashlib.sha256(sign_source.encode("utf-8")).hexdigest()
 
         return hmac.compare_digest(sign.lower(), expected_sign.lower())

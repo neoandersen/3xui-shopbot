@@ -1406,7 +1406,14 @@ def create_webhook_app(bot_controller_instance):
                 if key in checkbox_keys or key == 'panel_password':
                     continue
                 if key in request.form:
-                    update_setting(key, request.form.get(key))
+                    val = request.form.get(key)
+                    if isinstance(val, str) and key in (
+                        'anypay_project_id', 'anypay_secret_key', 'anypay_api_key', 'anypay_currency'
+                    ):
+                        val = val.strip()
+                        if key == 'anypay_currency':
+                            val = val.upper()
+                    update_setting(key, val)
 
             flash('Настройки сохранены.', 'success')
             next_hash = (request.form.get('next_hash') or '').strip() or '#panel'
@@ -2449,7 +2456,7 @@ def create_webhook_app(bot_controller_instance):
             from flask import Response
             return Response("OK", status=200, mimetype="text/plain")
 
-        secret_key = get_setting("anypay_secret_key", "") or os.getenv("ANYPAY_SECRET_KEY", "")
+        secret_key = str(get_setting("anypay_secret_key", "") or os.getenv("ANYPAY_SECRET_KEY", "")).strip()
         if not secret_key:
             logger.error("AnyPay webhook: secret_key не настроен в БД или .env")
             return "Bad Request", 400

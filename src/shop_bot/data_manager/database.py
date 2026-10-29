@@ -1899,6 +1899,10 @@ def get_all_settings() -> dict:
 
 def update_setting(key: str, value: str):
     try:
+        if isinstance(value, str) and key in ("anypay_project_id", "anypay_secret_key", "anypay_api_key", "anypay_currency"):
+            value = value.strip()
+            if key == "anypay_currency":
+                value = value.upper()
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute("INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)", (key, value))
