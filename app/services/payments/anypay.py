@@ -35,8 +35,10 @@ class AnyPayService:
 
     def get_webhook_url(self) -> str:
         if self.panel_domain:
+            if self.port in (80, 443) or "neo-vpn.click" in self.panel_domain:
+                return f"https://{self.panel_domain}/webhook/anypay"
             return f"https://{self.panel_domain}:{self.port}/webhook/anypay"
-        return "/webhook/anypay"
+        return "https://neo-vpn.click/webhook/anypay"
 
     def get_bot_url(self) -> str:
         return f"https://t.me/{self.bot_username}"

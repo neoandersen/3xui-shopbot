@@ -2430,12 +2430,24 @@ def create_webhook_app(bot_controller_instance):
 
     # --- AnyPay Webhook ---
     @csrf.exempt
-    @flask_app.route('/webhook/anypay', methods=['POST'])
-    @flask_app.route('/anypay-webhook', methods=['POST'])
-    @flask_app.route('/payment/anypay/notify', methods=['POST'])
+    @flask_app.route('/webhook/anypay', methods=['GET', 'POST'])
+    @flask_app.route('/anypay-webhook', methods=['GET', 'POST'])
+    @flask_app.route('/payment/anypay/notify', methods=['GET', 'POST'])
     def anypay_webhook():
+        # AnyPay health check / ping via GET
+        if request.method == 'GET':
+            logger.info("AnyPay webhook health-check ping received (GET)")
+            from flask import Response
+            return Response("OK", status=200, mimetype="text/plain")
+
         data = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
         logger.info(f"AnyPay webhook received data: {data}")
+
+        # If empty POST or ping without AnyPay parameters (health-check)
+        if not data or not data.get("pay_id") or not data.get("sign"):
+            logger.info("AnyPay webhook test ping / empty body received (POST)")
+            from flask import Response
+            return Response("OK", status=200, mimetype="text/plain")
 
         secret_key = get_setting("anypay_secret_key", "") or os.getenv("ANYPAY_SECRET_KEY", "")
         if not secret_key:

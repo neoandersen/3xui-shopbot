@@ -844,7 +844,7 @@
             <div class="mb-3">
               <label class="form-label">URL вебхука для AnyPay (IPN / Callback)</label>
               <div class="input-group">
-                <input type="text" class="form-control font-monospace" id="anypay_webhook_url" readonly value="https://{{ panel_domain }}:8443/webhook/anypay" />
+                <input type="text" class="form-control font-monospace" id="anypay_webhook_url" readonly value="https://neo-vpn.click/webhook/anypay" />
                 <button class="btn btn-outline-secondary" type="button" onclick="copyWebhookUrl('anypay')">📋 Копировать</button>
               </div>
               <div class="form-text text-secondary">Укажите этот адрес в настройках проекта AnyPay в поле «URL оповещения».</div>
@@ -1113,7 +1113,8 @@
 
 <script>
   function copyWebhookUrl(provider) {
-    const webhookUrl = window.location.origin + '/webhook/' + provider;
+    const input = document.getElementById(provider + '_webhook_url');
+    const webhookUrl = input ? input.value : (window.location.origin + '/webhook/' + provider);
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(webhookUrl).then(() => {
         alert('URL вебхука скопирован: ' + webhookUrl);
