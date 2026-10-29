@@ -1076,10 +1076,13 @@ def get_user_router() -> Router:
             await state.clear()
             return
 
-        order_id = str(uuid.uuid4())
+        import time
+        order_id = str(int(time.time() * 1000))[-9:]
         amount_usd = float(amount)
         amount_rub, rate = currency_service.convert_from_usd(amount_usd, "RUB")
         amount_rub = round(float(amount_rub), 2)
+        if amount_rub < 50.0:
+            amount_rub = 50.0
         rate = float(rate)
 
         metadata = {
@@ -3179,15 +3182,19 @@ def get_user_router() -> Router:
             await state.clear()
             return
 
+        import time
         final_price_usd = float(data.get('final_price', plan['price']))
         if callback.data and callback.data.startswith("pay:anypay:"):
             parts = callback.data.split(":")
-            order_id = parts[2] if len(parts) > 2 and parts[2] else str(uuid.uuid4())
+            cand = ''.join(filter(str.isdigit, parts[2] if len(parts) > 2 else ""))
+            order_id = cand[-9:] if cand else str(int(time.time() * 1000))[-9:]
         else:
-            order_id = str(uuid.uuid4())
+            order_id = str(int(time.time() * 1000))[-9:]
 
         amount_rub, rate = currency_service.convert_from_usd(final_price_usd, "RUB")
         amount_rub = round(float(amount_rub), 2)
+        if amount_rub < 50.0:
+            amount_rub = 50.0
         rate = float(rate)
         customer_email = data.get('customer_email') or get_setting("receipt_email") or f"user_{user_id}@shop.local"
 

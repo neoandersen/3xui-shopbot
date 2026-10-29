@@ -45,80 +45,91 @@ class AnyPayService:
 
     def calculate_payment_sign(
         self,
-        pay_id: str,
-        amount: str,
+        pay_id: Any,
+        amount: Any,
         currency: Optional[str] = None,
-        project_id: Optional[str] = None,
+        description: Optional[str] = None,
+        success_url: Optional[str] = None,
+        fail_url: Optional[str] = None,
+        merchant_id: Optional[str] = None,
         secret_key: Optional[str] = None,
-        merchant_id: Optional[str] = None
+        project_id: Optional[str] = None
     ) -> str:
         """
-        sign = hashlib.sha256(f"{currency}:{amount}:{secret_key}:{project_id}:{pay_id}".encode('utf-8')).hexdigest()
+        AnyPay SCI signature formula:
+        raw_sign = f"{merchant_id}:{pay_id}:{amount}:{currency}:{desc}:{success_url}:{fail_url}:{secret_key}"
+        sign = hashlib.sha256(raw_sign.encode('utf-8')).hexdigest()
         """
-        proj = project_id if project_id is not None else merchant_id
-        project_id_val = str(proj if proj is not None else self.project_id).strip()
-        secret_key_val = str(secret_key if secret_key is not None else self.secret_key).strip()
-        pay_id_val = str(pay_id).strip()
-        currency_val = str(currency or self.currency).strip().upper()
-        amount_val = str(amount).strip()
+        numeric_id = ''.join(filter(str.isdigit, str(pay_id)))
+        if not numeric_id:
+            import time
+            numeric_id = str(int(time.time() * 1000))[-9:]
+        pay_id_int = int(numeric_id)
 
-        sign_source = f"{currency_val}:{amount_val}:{secret_key_val}:{project_id_val}:{pay_id_val}"
-        return hashlib.sha256(sign_source.encode("utf-8")).hexdigest()
+        merchant_id_val = str(merchant_id or project_id or self.project_id or getattr(self, 'merchant_id', '')).strip()
+        amount_str = f"{float(amount):.2f}"
+        currency_val = str(currency or self.currency or 'RUB').strip().upper()
+        desc_val = str(description or 'Оплата подписки NeoVPN').strip()
+        default_redirect = self.get_bot_url() or 'https://t.me/neovpn_servers_bot'
+        succ_val = str(success_url or default_redirect).strip()
+        fail_val = str(fail_url or default_redirect).strip()
+        secret_key_val = str(secret_key if secret_key is not None else self.secret_key).strip()
+
+        raw_sign = f"{merchant_id_val}:{pay_id_int}:{amount_str}:{currency_val}:{desc_val}:{succ_val}:{fail_val}:{secret_key_val}"
+        return hashlib.sha256(raw_sign.encode('utf-8')).hexdigest()
 
     def generate_payment_url(
         self,
-        pay_id: str = "",
+        pay_id: Any = "",
         amount: float = 0.0,
-        description: str = "Оплата подписки",
+        description: str = "Оплата подписки NeoVPN",
         currency: Optional[str] = None,
         success_url: Optional[str] = None,
         fail_url: Optional[str] = None,
-        project_id: Optional[str] = None,
+        merchant_id: Optional[str] = None,
         secret_key: Optional[str] = None,
-        merchant_id: Optional[str] = None
+        project_id: Optional[str] = None
     ) -> Optional[str]:
-        proj = project_id if project_id is not None else merchant_id
-        project_id_val = str(proj if proj is not None else self.project_id).strip()
-        secret_key_val = str(secret_key if secret_key is not None else self.secret_key).strip()
-        pay_id_val = str(pay_id).strip()
-        currency_val = str(currency or self.currency).strip().upper()
+        # 1. Гарантируем числовой pay_id (integer)
+        numeric_id = ''.join(filter(str.isdigit, str(pay_id)))
+        if not numeric_id:
+            import time
+            numeric_id = str(int(time.time() * 1000))[-9:]
+        pay_id_int = int(numeric_id)
 
-        if not (project_id_val and secret_key_val):
-            logger.error("AnyPay не настроен: отсутствует project_id или secret_key")
+        # 2. Нормализация значений
+        merchant_id_val = str(merchant_id or project_id or self.project_id or getattr(self, 'merchant_id', '')).strip()
+        amount_str = f"{float(amount):.2f}"
+        currency_val = str(currency or self.currency or 'RUB').strip().upper()
+        desc_val = str(description or 'Оплата подписки NeoVPN').strip()
+        default_redirect = self.get_bot_url() or 'https://t.me/neovpn_servers_bot'
+        succ_val = str(success_url or default_redirect).strip()
+        fail_val = str(fail_url or default_redirect).strip()
+        secret_key_val = str(secret_key if secret_key is not None else self.secret_key).strip()
+
+        if not (merchant_id_val and secret_key_val):
+            logger.error("AnyPay не настроен: отсутствует project_id/merchant_id или secret_key")
             return None
 
-        amount_str = f"{float(amount):.2f}".strip()
-        sign = self.calculate_payment_sign(
-            pay_id=pay_id_val,
-            amount=amount_str,
-            currency=currency_val,
-            project_id=project_id_val,
-            secret_key=secret_key_val
-        )
+        # 3. Расчёт подписи по формуле AnyPay SCI
+        raw_sign = f"{merchant_id_val}:{pay_id_int}:{amount_str}:{currency_val}:{desc_val}:{succ_val}:{fail_val}:{secret_key_val}"
+        sign = hashlib.sha256(raw_sign.encode('utf-8')).hexdigest()
 
-        default_redirect = self.get_bot_url()
-        desc = str(description or "Оплата подписки").strip()
+        # 4. Формирование GET-параметров
         params = {
-            "project_id": project_id_val,
-            "pay_id": pay_id_val,
-            "amount": amount_str,
-            "currency": currency_val,
-            "desc": desc,
-            "sign": sign.strip()
+            'merchant_id': merchant_id_val,
+            'pay_id': pay_id_int,
+            'amount': amount_str,
+            'currency': currency_val,
+            'desc': desc_val,
+            'success_url': succ_val,
+            'fail_url': fail_val,
+            'sign': sign
         }
-
-        effective_success = str(success_url or default_redirect).strip()
-        effective_fail = str(fail_url or default_redirect).strip()
-        if effective_success:
-            params["success_url"] = effective_success
-        if effective_fail:
-            params["fail_url"] = effective_fail
-
-        query_string = urllib.parse.urlencode(params)
-        payment_url = f"{ANYPAY_MERCHANT_URL}?{query_string}"
+        payment_url = f"{ANYPAY_MERCHANT_URL}?{urllib.parse.urlencode(params)}"
 
         secret_key_masked = f"{secret_key_val[:4]}...{secret_key_val[-4:]}" if len(secret_key_val) >= 8 else "****"
-        logger.info(f"[AnyPay Debug] raw_string_for_sign: '{currency_val}:{amount_str}:{secret_key_masked}:{project_id_val}:{pay_id_val}'")
+        logger.info(f"[AnyPay Debug] raw_string_for_sign: '{merchant_id_val}:{pay_id_int}:{amount_str}:{currency_val}:{desc_val}:{succ_val}:{fail_val}:{secret_key_masked}'")
         logger.info(f"[AnyPay Debug] generated_sign: {sign}")
         logger.info(f"[AnyPay Debug] full_payment_url: {payment_url}")
 
