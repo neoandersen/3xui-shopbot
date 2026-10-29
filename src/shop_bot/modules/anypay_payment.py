@@ -75,9 +75,22 @@ def generate_payment_url(
         fail_url=fail_url,
         merchant_id=merchant_id,
         secret_key=secret_key
-    )
     if isinstance(result, tuple):
-        return result[1] if len(result) > 1 and result[0] else None
+        result = result[1] if len(result) > 1 and result[0] else None
+
+    amount_str = f"{float(amount):.2f}".strip()
+    secret_key_masked = f"{secret_key[:4]}...{secret_key[-4:]}" if len(secret_key) >= 8 else "****"
+    sign = service.calculate_payment_sign(
+        pay_id=pay_id,
+        amount=amount_str,
+        currency=currency,
+        merchant_id=merchant_id,
+        secret_key=secret_key
+    )
+    logger.info(f"[AnyPay Debug] raw_string_for_sign: '{currency}:{amount_str}:{secret_key_masked}:{merchant_id}:{pay_id}'")
+    logger.info(f"[AnyPay Debug] generated_sign: {sign}")
+    logger.info(f"[AnyPay Debug] full_payment_url: {result}")
+
     return result
 
 def verify_notification_signature(

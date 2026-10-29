@@ -107,6 +107,12 @@ class AnyPayService:
 
         query_string = urllib.parse.urlencode(params)
         payment_url = f"{ANYPAY_MERCHANT_URL}?{query_string}"
+
+        secret_key_masked = f"{secret_key[:4]}...{secret_key[-4:]}" if len(secret_key) >= 8 else "****"
+        logger.info(f"[AnyPay Debug] raw_string_for_sign: '{currency}:{amount_str}:{secret_key_masked}:{merchant_id}:{pay_id}'")
+        logger.info(f"[AnyPay Debug] generated_sign: {sign}")
+        logger.info(f"[AnyPay Debug] full_payment_url: {payment_url}")
+
         return payment_url
 
     @staticmethod

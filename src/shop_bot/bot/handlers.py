@@ -1103,6 +1103,7 @@ def get_user_router() -> Router:
 
         if pay_url and isinstance(pay_url, str) and pay_url.startswith("http"):
             pay_url = str(pay_url).strip()
+            logger.info(f"[AnyPay Debug] topup payment_url: {pay_url}")
             create_pending_transaction(
                 payment_id=order_id,
                 user_id=user_id,
@@ -3224,6 +3225,7 @@ def get_user_router() -> Router:
             return
 
         pay_url = str(pay_url).strip()
+        logger.info(f"[AnyPay Debug] subscription payment_url: {pay_url}")
 
         try:
             create_pending_transaction(
