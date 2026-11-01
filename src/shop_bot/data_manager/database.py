@@ -3102,12 +3102,29 @@ def update_key_status_from_server(key_email: str, xui_client_data):
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             if xui_client_data:
-                expiry_date = datetime.fromtimestamp(xui_client_data.expiry_time / 1000)
-                cursor.execute("UPDATE vpn_keys SET xui_client_uuid = ?, expiry_date = ? WHERE key_email = ?", (xui_client_data.id, expiry_date, key_email))
-                cursor.execute("UPDATE user_keys SET client_uuid = ?, expiry_time = ?, status = 'active' WHERE email = ?", (xui_client_data.id, int(xui_client_data.expiry_time), key_email))
+                cid = None
+                exp_ms = 0
+                if isinstance(xui_client_data, dict):
+                    cid = xui_client_data.get('uuid') or xui_client_data.get('id')
+                    exp_ms = int(xui_client_data.get('expiryTime') or xui_client_data.get('expiry_time') or 0)
+                else:
+                    cid = getattr(xui_client_data, 'id', None)
+                    exp_ms = int(getattr(xui_client_data, 'expiry_time', 0) or 0)
+
+                if exp_ms > 0:
+                    expiry_date = datetime.fromtimestamp(exp_ms / 1000)
+                else:
+                    expiry_date = datetime.now()
+
+                if cid:
+                    cursor.execute("UPDATE vpn_keys SET xui_client_uuid = ?, expiry_date = ? WHERE key_email = ?", (str(cid), expiry_date, key_email))
+                    cursor.execute("UPDATE user_keys SET client_uuid = ?, expiry_time = ?, status = 'active' WHERE email = ?", (str(cid), exp_ms, key_email))
+                else:
+                    cursor.execute("UPDATE vpn_keys SET expiry_date = ? WHERE key_email = ?", (expiry_date, key_email))
+                    cursor.execute("UPDATE user_keys SET expiry_time = ?, status = 'active' WHERE email = ?", (exp_ms, key_email))
             else:
-                cursor.execute("DELETE FROM user_keys WHERE email = ?", (key_email,))
-                cursor.execute("DELETE FROM vpn_keys WHERE key_email = ?", (key_email,))
+                # Do NOT hard delete active records - only update status
+                cursor.execute("UPDATE user_keys SET status = 'expired' WHERE email = ?", (key_email,))
             conn.commit()
     except sqlite3.Error as e:
         logging.error(f"Не удалось update key status for {key_email}: {e}")
