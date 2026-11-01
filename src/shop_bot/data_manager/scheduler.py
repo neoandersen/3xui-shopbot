@@ -150,22 +150,51 @@ async def sync_keys_with_panels():
                 inbound_id=host['host_inbound_id']
             )
 
-            if not api or not inbound:
+            if not api:
                 logger.error(f"Scheduler: Не удалось авторизоваться на хосте '{host_name}'. Пропускаю его.")
                 continue
-            
-            full_inbound_details = api.inbound.get_by_id(inbound.id)
-            clients_on_server = {client.email: client for client in (full_inbound_details.settings.clients or [])}
+
+            base_url = host['host_url'].rstrip('/')
+            session = (
+                getattr(api, "http_session", None)
+                or getattr(api, "_http_session", None)
+                or (getattr(api.client, "http_session", None) if hasattr(api, "client") else None)
+                or xui_api.get_or_create_host_session(base_url)
+            )
+
+            # Получение списка клиентов через нативный API 3X-UI v3.10+
+            try:
+                r = session.get(f"{base_url}/panel/api/clients/list", timeout=10, verify=False)
+                clients_list = r.json().get('obj', []) if r.status_code == 200 else []
+            except Exception as fetch_err:
+                logger.error(f"Scheduler: Ошибка запроса /panel/api/clients/list для '{host_name}': {fetch_err}")
+                clients_list = []
+
+            clients_on_server = {c['email']: c for c in clients_list if isinstance(c, dict) and 'email' in c}
             logger.debug(f"Scheduler: Найдено клиентов на панели '{host_name}': {len(clients_on_server)}")
 
             keys_in_db = database.get_keys_for_host(host_name)
             
             for db_key in keys_in_db:
                 key_email = db_key['key_email']
-                expiry_date = datetime.fromisoformat(db_key['expiry_date'])
+                try:
+                    expiry_date = datetime.fromisoformat(db_key['expiry_date'])
+                except Exception:
+                    expiry_date = datetime.now()
+
+                created_date = None
+                created_at_raw = db_key.get('created_date') or db_key.get('created_at')
+                if created_at_raw:
+                    try:
+                        created_date = datetime.fromisoformat(str(created_at_raw))
+                    except Exception:
+                        pass
+
                 now = datetime.now()
-                if expiry_date < now - timedelta(days=5):
-                    logger.debug(f"Scheduler: Ключ '{key_email}' просрочен более 5 дней. Удаляю с панели и из БД.")
+
+                # Удаление применять только к ключам, у которых срок истёк более 3 суток назад
+                if expiry_date < (now - timedelta(days=3)):
+                    logger.debug(f"Scheduler: Ключ '{key_email}' просрочен более 3 суток ({expiry_date}). Очищаю с панели и из БД.")
                     try:
                         await xui_api.delete_client_on_host(host_name, key_email)
                     except Exception as e:
@@ -173,27 +202,56 @@ async def sync_keys_with_panels():
                     deleted = database.delete_key_by_email(key_email)
                     if deleted:
                         total_affected_records += 1
-                        logger.debug(f"Scheduler: Ключ '{key_email}' удалён из локальной БД после очистки панели.")
-                    else:
-                        logger.warning(f"Scheduler: Попытка удалить ключ '{key_email}' из локальной БД — записей не затронуто.")
+                        logger.debug(f"Scheduler: Ключ '{key_email}' удалён из локальной БД после очистки.")
+                    clients_on_server.pop(key_email, None)
                     continue
 
                 server_client = clients_on_server.pop(key_email, None)
 
                 if server_client:
-                    reset_days = server_client.reset if server_client.reset is not None else 0
-                    server_expiry_ms = server_client.expiry_time + reset_days * 24 * 3600 * 1000
+                    reset_days = server_client.get('reset', 0) if isinstance(server_client, dict) else (getattr(server_client, 'reset', 0) or 0)
+                    raw_exp = server_client.get('expiryTime') if isinstance(server_client, dict) else getattr(server_client, 'expiry_time', 0)
+                    server_expiry_ms = int(raw_exp or 0) + int(reset_days or 0) * 24 * 3600 * 1000
                     local_expiry_dt = expiry_date
                     local_expiry_ms = int(local_expiry_dt.timestamp() * 1000)
 
-                    if abs(server_expiry_ms - local_expiry_ms) > 1000:
+                    if abs(server_expiry_ms - local_expiry_ms) > 1000 and server_expiry_ms > 0:
                         database.update_key_status_from_server(key_email, server_client)
                         total_affected_records += 1
                         logger.debug(f"Scheduler: Синхронизирован ключ '{key_email}' для хоста '{host_name}' (обновлён).")
                 else:
-                    logger.warning(f"Scheduler: Ключ '{key_email}' для хоста '{host_name}' не найден на сервере. Помечаю к удалению в локальной БД.")
-                    database.update_key_status_from_server(key_email, None)
-                    total_affected_records += 1
+                    # Ветка else (если ключ из базы не найден в clients_on_server):
+                    # а) Если ключ создан менее 24 часов назад (Grace Period) или срок действия expiry_time > now — НЕ УДАЛЯТЬ.
+                    # б) Вместо удаления выполнить автоматическое восстановление (Self-Healing): вызвать xui_api.create_or_update_key_on_host для пересоздания клиента в 3X-UI.
+                    # в) Удаление (или статус 'expired' / 'deleted') применять только к ключам, у которых срок истёк более 3 суток назад.
+                    is_recent = bool(created_date and (now - created_date) < timedelta(hours=24))
+                    is_active = expiry_date > now
+
+                    if is_recent or is_active:
+                        logger.info(
+                            f"Scheduler: Ключ '{key_email}' для хоста '{host_name}' отсутствует на панели 3X-UI, "
+                            f"но является активным (expiry={expiry_date}, recent={is_recent}). Выполняю Self-Healing..."
+                        )
+                        try:
+                            target_exp_ms = int(expiry_date.timestamp() * 1000)
+                            res = await xui_api.create_or_update_key_on_host(
+                                host_name=host_name,
+                                email=key_email,
+                                expiry_timestamp_ms=target_exp_ms
+                            )
+                            if res:
+                                logger.info(f"Scheduler: Self-Healing успешно восстановил клиента '{key_email}' на хосте '{host_name}'.")
+                                total_affected_records += 1
+                            else:
+                                logger.error(f"Scheduler: Self-Healing не смог восстановить клиента '{key_email}' на хосте '{host_name}'.")
+                        except Exception as heal_err:
+                            logger.error(f"Scheduler: Ошибка Self-Healing для '{key_email}': {heal_err}", exc_info=True)
+                    elif expiry_date < (now - timedelta(days=3)):
+                        logger.info(f"Scheduler: Ключ '{key_email}' истёк более 3 суток назад ({expiry_date}). Удаляю из БД.")
+                        database.delete_key_by_email(key_email)
+                        total_affected_records += 1
+                    else:
+                        logger.debug(f"Scheduler: Ключ '{key_email}' истёк менее 3 суток назад ({expiry_date}). Оставляю без удаления для возможного продления.")
 
             if clients_on_server:
                 # Try to attach orphan clients from panel to local DB so old keys get subscriptions
@@ -204,17 +262,11 @@ async def sync_keys_with_panels():
                         m = re.search(r"user(\d+)", orphan_email)
                         user_id = int(m.group(1)) if m else None
                         if not user_id:
-                            logger.warning(
-                                f"Scheduler: Найден осиротевший клиент '{orphan_email}' на '{host_name}', но не удалось определить user_id — пропускаю."
-                            )
                             continue
 
                         # Check that user exists
                         usr = database.get_user(user_id)
                         if not usr:
-                            logger.warning(
-                                f"Scheduler: Осиротевший клиент '{orphan_email}' указывает на user_id={user_id}, но пользователь не найден — пропускаю."
-                            )
                             continue
 
                         # If key already present (race/duplicate), skip insert
@@ -222,14 +274,15 @@ async def sync_keys_with_panels():
                         if existing:
                             continue
 
-                        reset_days = getattr(orphan_client, 'reset', 0) or 0
-                        expiry_ms = int(getattr(orphan_client, 'expiry_time', 0)) + int(reset_days) * 24 * 3600 * 1000
-                        client_uuid = getattr(orphan_client, 'id', None) or getattr(orphan_client, 'email', None) or ''
+                        reset_days = orphan_client.get('reset', 0) if isinstance(orphan_client, dict) else (getattr(orphan_client, 'reset', 0) or 0)
+                        raw_exp = orphan_client.get('expiryTime') if isinstance(orphan_client, dict) else getattr(orphan_client, 'expiry_time', 0)
+                        expiry_ms = int(raw_exp or 0) + int(reset_days or 0) * 24 * 3600 * 1000
+                        client_uuid = (
+                            orphan_client.get('uuid') or orphan_client.get('id') if isinstance(orphan_client, dict)
+                            else (getattr(orphan_client, 'id', None) or getattr(orphan_client, 'email', None) or '')
+                        )
 
                         if not client_uuid:
-                            logger.warning(
-                                f"Scheduler: У осиротевшего клиента '{orphan_email}' нет UUID/id — не могу привязать."
-                            )
                             continue
 
                         new_id = database.add_new_key(

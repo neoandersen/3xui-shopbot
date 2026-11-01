@@ -97,6 +97,13 @@ def main():
     aio_event_logger.addFilter(RussianizeAiogramFilter())
     logger = logging.getLogger(__name__)
 
+    # Загружаем переменные окружения из .env, если доступен модуль python-dotenv
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
+
     # ВАЖНО: сначала инициализируем базу данных, чтобы таблицы (включая bot_settings) были созданы
     database.initialize_db()
     logger.info("Проверка инициализации базы данных завершена.")

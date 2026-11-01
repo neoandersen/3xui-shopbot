@@ -34,6 +34,8 @@ from shop_bot.data_manager import speedtest_runner
 from shop_bot.data_manager import backup_manager
 from shop_bot.data_manager import resource_monitor
 from shop_bot.data_manager import database
+from app.services.payments.anypay import AnyPayService
+from app.services.payments.platega import PlategaService
 from shop_bot.data_manager.database import (
     get_all_settings, update_setting, get_all_hosts, get_plans_for_host,
     create_host, delete_host, create_plan, delete_plan, update_plan, get_user_count,
@@ -47,7 +49,7 @@ from shop_bot.data_manager.database import (
     get_all_keys, get_keys_for_user, get_key_by_id, delete_key_by_id, update_key_comment, update_key_info,
     add_new_key, get_balance, adjust_user_balance, get_referrals_for_user,
     get_user, get_key_by_email, get_host, get_traffic_sources_stats,
-    find_and_complete_pending_transaction, get_transaction_by_provider_payment_id)
+    find_and_complete_pending_transaction, get_transaction_by_provider_payment_id, get_plan_by_id)
 
 
 _bot_controller = None
@@ -94,10 +96,12 @@ ALL_SETTINGS_KEYS = [
     "aaio_enabled", "aaio_merchant_id", "aaio_secret_1", "aaio_secret_2", "aaio_api_key",
     # Cryptomus payments (multi-crypto & P2P)
     "cryptomus_enabled", "cryptomus_merchant_id", "cryptomus_api_key",
-    # PayOK payments (cards, SBP, P2P)
-    "payok_enabled", "payok_api_id", "payok_api_key", "payok_shop_id", "payok_secret_key", "payok_currency",
-    # Lava.top payments (cards RF/World, SBP)
-    "lavatop_enabled", "lavatop_api_key", "lavatop_offer_id", "lavatop_webhook_key", "lavatop_currency",
+    # AnyPay payments (cards RF/World, SBP)
+    "anypay_enabled", "anypay_project_id", "anypay_secret_key", "anypay_api_key", "anypay_currency",
+    # Platega.io payments
+    "platega_enabled", "platega_merchant_id", "platega_secret",
+    # Panel domain
+    "panel_domain",
     # Currency configuration
     "base_currency",
     # Bot lifecycle
@@ -129,10 +133,68 @@ def create_webhook_app(bot_controller_instance):
         static_folder='static'
     )
     
-    # SECRET_KEY из окружения или сгенерированный на лету (без хардкода)
-    flask_app.config['SECRET_KEY'] = os.getenv('SHOPBOT_SECRET_KEY') or secrets.token_hex(32)
+    def get_persistent_secret_key() -> str:
+        """Получить персистентный SECRET_KEY для Flask сессий и CSRF.
+        1. Проверяет переменные окружения SHOPBOT_SECRET_KEY или FLASK_SECRET_KEY.
+        2. Проверяет значение в базе данных через get_setting('flask_secret_key').
+        3. Проверяет файл на диске: data/.flask_secret.
+        4. Если ключ не найден — генерирует новый, сохраняет в БД и файл, и возвращает его.
+        """
+        env_secret = os.getenv('SHOPBOT_SECRET_KEY') or os.getenv('FLASK_SECRET_KEY')
+        if env_secret and env_secret.strip():
+            return env_secret.strip()
+
+        try:
+            db_secret = get_setting('flask_secret_key')
+            if db_secret and str(db_secret).strip():
+                return str(db_secret).strip()
+        except Exception as e:
+            logger.warning(f"Не удалось получить flask_secret_key из БД: {e}")
+
+        project_root = Path("/app/project") if Path("/app/project").exists() else Path(__file__).resolve().parent.parent.parent.parent
+        data_dir = project_root / "data"
+        secret_file = data_dir / ".flask_secret"
+        if secret_file.exists():
+            try:
+                file_secret = secret_file.read_text(encoding='utf-8').strip()
+                if file_secret:
+                    try:
+                        update_setting('flask_secret_key', file_secret)
+                    except Exception:
+                        pass
+                    return file_secret
+            except Exception as e:
+                logger.warning(f"Не удалось прочитать {secret_file}: {e}")
+
+        new_secret = secrets.token_hex(32)
+
+        try:
+            update_setting('flask_secret_key', new_secret)
+        except Exception as e:
+            logger.warning(f"Не удалось сохранить flask_secret_key в БД: {e}")
+
+        try:
+            data_dir.mkdir(parents=True, exist_ok=True)
+            secret_file.write_text(new_secret, encoding='utf-8')
+        except Exception as e:
+            logger.warning(f"Не удалось записать в {secret_file}: {e}")
+
+        return new_secret
+
+    # Персистентный SECRET_KEY (сохраняется в БД и data/.flask_secret, не сбрасывается при рестартах)
+    flask_app.config['SECRET_KEY'] = get_persistent_secret_key()
     from datetime import timedelta
     flask_app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
+
+    # ProxyFix для корректной обработки HTTPS и Nginx прокси (X-Forwarded-Proto, X-Forwarded-For, X-Forwarded-Host)
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    flask_app.wsgi_app = ProxyFix(flask_app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+    # Настройки CSRF и сессий
+    flask_app.config['WTF_CSRF_TIME_LIMIT'] = None  # Токен не протухает при длительном открытии вкладки
+    flask_app.config['WTF_CSRF_SSL_STRICT'] = False # Исключить ложные срабатывания при SSL offloading через Nginx
+    flask_app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    flask_app.config['SESSION_COOKIE_HTTPONLY'] = True
 
     # CSRF защита для всех POST форм в панели; вебхуки будут исключены
     csrf = CSRFProtect()
@@ -140,10 +202,12 @@ def create_webhook_app(bot_controller_instance):
 
     @flask_app.context_processor
     def inject_current_year():
-        # Добавляем csrf_token в шаблоны для meta и скрытых полей
+        # Добавляем csrf_token в шаблоны для meta и скрытых полей, а также текущую версию проекта
         return {
             'current_year': datetime.utcnow().year,
-            'csrf_token': generate_csrf
+            'csrf_token': generate_csrf,
+            'app_version': 'v1.4.0',
+            'version': '1.4.0'
         }
 
     def login_required(f):
@@ -176,6 +240,16 @@ def create_webhook_app(bot_controller_instance):
         flash('Вы успешно вышли.', 'success')
         return redirect(url_for('login_page'))
 
+    @flask_app.route('/privacy', methods=['GET'])
+    @flask_app.route('/privacy.html', methods=['GET'])
+    def privacy_policy_page():
+        return render_template('privacy.html')
+
+    @flask_app.route('/terms', methods=['GET'])
+    @flask_app.route('/terms.html', methods=['GET'])
+    def terms_of_service_page():
+        return render_template('terms.html')
+
     def get_common_template_data():
         bot_status = _bot_controller.get_status()
         support_bot_status = _support_bot_controller.get_status()
@@ -193,6 +267,12 @@ def create_webhook_app(bot_controller_instance):
             closed_tickets_count = 0
             all_tickets_count = 0
         admin_username = session.get('admin_username') or settings.get('panel_login') or 'Admin'
+        from flask import has_request_context
+        panel_domain = settings.get('panel_domain') or settings.get('domain')
+        if not panel_domain and has_request_context():
+            panel_domain = request.host.split(':')[0]
+        if not panel_domain:
+            panel_domain = 'auth.neo-vpn.click'
         return {
             "bot_status": bot_status,
             "all_settings_ok": all_settings_ok,
@@ -203,6 +283,7 @@ def create_webhook_app(bot_controller_instance):
             "all_tickets_count": all_tickets_count,
             "brand_title": settings.get('panel_brand_title') or 'NEOVPN',
             "admin_username": admin_username,
+            "panel_domain": panel_domain,
         }
 
     @flask_app.route('/brand-title', methods=['POST'])
@@ -302,7 +383,7 @@ def create_webhook_app(bot_controller_instance):
         )
 
     # --- Модуль безопасности периметра и харденинга (/admin/security) ---
-    enhanced_admin_routes.register_enhanced_admin_routes(flask_app, login_required, get_common_template_data)
+    enhanced_admin_routes.register_enhanced_admin_routes(flask_app, login_required, get_common_template_data, csrf=csrf)
 
     @flask_app.route('/dashboard/run-speedtests', methods=['POST'])
     @login_required
@@ -1373,7 +1454,7 @@ def create_webhook_app(bot_controller_instance):
             checkbox_keys = [
                 'force_subscription', 'sbp_enabled', 'trial_enabled', 'enable_referrals',
                 'enable_fixed_referral_bonus', 'stars_enabled', 'yoomoney_enabled', 'monitoring_enabled',
-                'aaio_enabled', 'cryptomus_enabled', 'payok_enabled', 'lavatop_enabled'
+                'aaio_enabled', 'cryptomus_enabled', 'platega_enabled', 'anypay_enabled'
             ]
             for checkbox_key in checkbox_keys:
                 values = request.form.getlist(checkbox_key)
@@ -1385,7 +1466,14 @@ def create_webhook_app(bot_controller_instance):
                 if key in checkbox_keys or key == 'panel_password':
                     continue
                 if key in request.form:
-                    update_setting(key, request.form.get(key))
+                    val = request.form.get(key)
+                    if isinstance(val, str) and key in (
+                        'anypay_project_id', 'anypay_secret_key', 'anypay_api_key', 'anypay_currency'
+                    ):
+                        val = val.strip()
+                        if key == 'anypay_currency':
+                            val = val.upper()
+                    update_setting(key, val)
 
             flash('Настройки сохранены.', 'success')
             next_hash = (request.form.get('next_hash') or '').strip() or '#panel'
@@ -1893,8 +1981,62 @@ def create_webhook_app(bot_controller_instance):
         except Exception as e:
             logger.error(f"Ошибка в обработчике вебхука CryptoBot: {e}", exc_info=True)
             return 'Error', 500
-        
+    def process_payment_success(order_id: str, provider: str) -> bool:
+        if not order_id:
+            logger.warning(f"process_payment_success: отсутствует order_id для provider={provider}")
+            return False
+
+        existing_tx = get_transaction_by_provider_payment_id(provider, str(order_id))
+        if existing_tx and existing_tx.get('status') in ('paid', 'completed', 'success'):
+            logger.info(f"process_payment_success: платёж {order_id} ({provider}) уже был обработан ранее.")
+            return True
+
+        metadata = find_and_complete_pending_transaction(
+            payment_id=str(order_id),
+            amount_rub=None,
+            payment_method=provider.capitalize(),
+            currency_name='RUB',
+            amount_currency=None
+        )
+
+        if metadata:
+            metadata['payment_id'] = str(order_id)
+            metadata['payment_method'] = metadata.get('payment_method') or provider.capitalize()
+            if not metadata.get('action'):
+                metadata['action'] = 'extend' if metadata.get('key_id') else 'new'
+            if metadata.get('plan_id'):
+                try:
+                    plan_info = get_plan_by_id(int(metadata['plan_id']))
+                    if plan_info:
+                        if not metadata.get('plan_name'):
+                            metadata['plan_name'] = plan_info.get('plan_name') or f"{plan_info.get('months', 1)} мес."
+                        if not metadata.get('host_name'):
+                            metadata['host_name'] = plan_info.get('host_name') or ''
+                        if not metadata.get('host_id') and plan_info.get('host_id'):
+                            metadata['host_id'] = plan_info.get('host_id')
+                except Exception as e_enrich:
+                    logger.warning(f"process_payment_success: ошибка обогащения метаданных: {e_enrich}")
+
+            bot = _bot_controller.get_bot_instance()
+            loop = current_app.config.get('EVENT_LOOP')
+            payment_processor = handlers.process_successful_payment
+
+            if bot and loop and loop.is_running():
+                asyncio.run_coroutine_threadsafe(payment_processor(bot, metadata), loop)
+                logger.info(f"process_payment_success: платёж {order_id} ({provider}) успешно отправлен в обработчик.")
+                return True
+            else:
+                logger.error(f"process_payment_success: бот или event loop не запущены для {order_id} ({provider}).")
+                return False
+        else:
+            logger.warning(f"process_payment_success: транзакция {order_id} ({provider}) подтверждена, но метаданные отсутствуют.")
+            tx = get_transaction_by_provider_payment_id(provider, str(order_id))
+            if tx and tx.get('status') in ('paid', 'completed', 'success'):
+                return True
+            return False
+
     @csrf.exempt
+    @flask_app.route('/webhook/heleket', methods=['POST'])
     @flask_app.route('/heleket-webhook', methods=['POST'])
     def heleket_webhook_handler():
         try:
@@ -1919,16 +2061,28 @@ def create_webhook_app(bot_controller_instance):
 
             if data.get('status') in ["paid", "paid_over"]:
                 metadata_str = data.get('description')
-                if not metadata_str: return 'Error', 400
-                
-                metadata = json.loads(metadata_str)
-                
-                bot = _bot_controller.get_bot_instance()
-                loop = current_app.config.get('EVENT_LOOP')
-                payment_processor = handlers.process_successful_payment
+                metadata = {}
+                if metadata_str:
+                    try:
+                        metadata = json.loads(metadata_str) if isinstance(metadata_str, str) else dict(metadata_str)
+                    except Exception:
+                        metadata = {}
 
-                if bot and loop and loop.is_running():
-                    asyncio.run_coroutine_threadsafe(payment_processor(bot, metadata), loop)
+                order_id = str(data.get('order_id') or metadata.get('payment_id') or '').strip()
+                processed = False
+                if order_id:
+                    processed = process_payment_success(order_id=order_id, provider='heleket')
+                    if processed:
+                        logger.info(f"Heleket webhook: платёж {order_id} успешно обработан через process_payment_success.")
+                
+                # Если транзакция не была найдена в pending, обрабатываем напрямую через metadata
+                if not processed and metadata:
+                    bot = _bot_controller.get_bot_instance()
+                    loop = current_app.config.get('EVENT_LOOP')
+                    payment_processor = handlers.process_successful_payment
+
+                    if bot and loop and loop.is_running():
+                        asyncio.run_coroutine_threadsafe(payment_processor(bot, metadata), loop)
             
             return 'OK', 200
         except Exception as e:
@@ -2088,6 +2242,7 @@ def create_webhook_app(bot_controller_instance):
         return render_template('button_constructor.html', **template_data)
 
     # --- Button Constructor API ---
+    @csrf.exempt
     @flask_app.route('/api/button-configs', methods=['GET', 'POST'])
     @login_required
     def button_configs_api():
@@ -2122,6 +2277,7 @@ def create_webhook_app(bot_controller_instance):
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
 
+    @csrf.exempt
     @flask_app.route('/api/button-configs/<int:button_id>', methods=['PUT', 'DELETE'])
     @login_required
     def button_config_api(button_id):
@@ -2148,6 +2304,7 @@ def create_webhook_app(bot_controller_instance):
             except Exception as e:
                 return jsonify({"success": False, "error": str(e)}), 500
 
+    @csrf.exempt
     @flask_app.route('/api/button-configs/<menu_type>/reorder', methods=['POST'])
     @login_required
     def button_configs_reorder_api(menu_type):
@@ -2163,6 +2320,7 @@ def create_webhook_app(bot_controller_instance):
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
     
+    @csrf.exempt
     @flask_app.route('/api/button-configs/force-migration', methods=['POST'])
     @login_required
     def force_button_migration_api():
@@ -2179,6 +2337,8 @@ def create_webhook_app(bot_controller_instance):
 
     # --- YooMoney Webhook ---
     @csrf.exempt
+    @flask_app.route('/webhook/yoomoney', methods=['POST'])
+    @flask_app.route('/yoomoney/callback', methods=['POST'])
     @flask_app.route('/yoomoney-webhook', methods=['POST'])
     def yoomoney_webhook_handler():
         """ЮMoney HTTP уведомление (кнопка/ссылка p2p). Подпись: sha1(notification_type&operation_id&amount&currency&datetime&sender&codepro&notification_secret&label)."""
@@ -2217,19 +2377,15 @@ def create_webhook_app(bot_controller_instance):
             # Обрабатываем успешный платеж
             if form.get('notification_type') == 'p2p-incoming':
                 amount = float(form.get('amount', 0))
-                label = form.get('label', '')
-                
-                # Здесь должна быть логика обработки платежа
+                label = str(form.get('label', '')).strip()
                 logger.info(f"YooMoney payment: {amount}, label: {label}")
                 
-                # Уведомляем бота о платеже
-                try:
-                    bot = _bot_controller.get_bot_instance()
-                    if bot:
-                        # Здесь должна быть логика обработки платежа через handlers
-                        pass
-                except Exception as e:
-                    logger.error(f"YooMoney webhook: ошибка уведомления бота: {e}")
+                if label:
+                    success = process_payment_success(order_id=label, provider='yoomoney')
+                    if success:
+                        logger.info(f"YooMoney webhook: платёж {label} успешно обработан через process_payment_success.")
+                    else:
+                        logger.warning(f"YooMoney webhook: не удалось обработать заказ {label}")
             
             return 'OK', 200
             
@@ -2336,192 +2492,108 @@ def create_webhook_app(bot_controller_instance):
                 return 'OK', 200
 
             if status in ('paid', 'paid_over'):
-                amount_usd = float(data.get('amount') or 0.0)
-                amount_crypto = float(data.get('payment_amount') or 0.0)
-                crypto_currency = str(data.get('currency') or 'USDT')
-
-                metadata = find_and_complete_pending_transaction(
-                    payment_id=payment_id,
-                    amount_rub=amount_usd,
-                    payment_method=f'Cryptomus ({crypto_currency})',
-                    currency_name=crypto_currency,
-                    amount_currency=amount_crypto
-                )
-
-                if metadata:
-                    metadata['payment_id'] = payment_id
-                    metadata['payment_method'] = metadata.get('payment_method') or f'Cryptomus ({crypto_currency})'
-                    bot = _bot_controller.get_bot_instance()
-                    loop = current_app.config.get('EVENT_LOOP')
-                    payment_processor = handlers.process_successful_payment
-
-                    if bot and loop and loop.is_running():
-                        asyncio.run_coroutine_threadsafe(payment_processor(bot, metadata), loop)
-                        logger.info(f"Cryptomus webhook: платёж {payment_id} успешно отправлен в обработчик.")
-                    else:
-                        logger.error("Cryptomus webhook: бот или event loop не запущены.")
-                else:
-                    logger.warning(f"Cryptomus webhook: транзакция {payment_id} подтверждена, но метаданные отсутствуют.")
+                success = process_payment_success(order_id=payment_id, provider='cryptomus')
+                if success:
+                    logger.info(f"Cryptomus webhook: платёж {payment_id} успешно обработан.")
+                return 'OK', 200
 
             return 'OK', 200
         except Exception as e:
             logger.error(f"Ошибка в обработчике вебхука Cryptomus: {e}", exc_info=True)
             return 'Error', 500
 
-    # --- PayOK Webhook ---
+    # --- AnyPay Webhook ---
     @csrf.exempt
-    @flask_app.route('/webhook/payok', methods=['POST'])
-    @flask_app.route('/payok-webhook', methods=['POST'])
-    def payok_webhook_handler():
-        try:
-            logger.info("🔔 Получен webhook от PayOK")
-            data = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
-            logger.info(f"PayOK webhook payload: {data}")
+    @flask_app.route('/webhook/anypay', methods=['GET', 'POST'])
+    @flask_app.route('/anypay-webhook', methods=['GET', 'POST'])
+    @flask_app.route('/payment/anypay/notify', methods=['GET', 'POST'])
+    def anypay_webhook():
+        # AnyPay health check / ping via GET
+        if request.method == 'GET':
+            logger.info("AnyPay webhook health-check ping received (GET)")
+            from flask import Response
+            return Response("OK", status=200, mimetype="text/plain")
 
-            secret_key = get_setting('payok_secret_key')
-            shop_id = str(data.get('shop') or get_setting('payok_shop_id') or '').strip()
-            payment_id = str(data.get('payment_id') or data.get('payment') or '').strip()
-            payok_id = str(data.get('payok_id') or '').strip()
-            amount = data.get('amount')
-            currency = str(data.get('currency') or 'RUB').strip().upper()
-            sign = str(data.get('sign') or '').strip()
-            desc = str(data.get('desc') or '').strip()
+        data = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
+        logger.info(f"AnyPay webhook received data: {data}")
 
-            if not payment_id or not sign:
-                logger.warning("PayOK webhook: отсутствуют обязательные поля payment_id или sign")
-                return 'Bad Request', 400
+        # If empty POST or ping without AnyPay parameters (health-check)
+        if not data or not data.get("pay_id") or not data.get("sign"):
+            logger.info("AnyPay webhook test ping / empty body received (POST)")
+            from flask import Response
+            return Response("OK", status=200, mimetype="text/plain")
 
-            from shop_bot.modules import payok_payment
-            if not payok_payment.verify_payok_webhook_sign(
-                secret_key=secret_key,
-                desc=desc,
-                currency=currency,
-                shop=shop_id,
-                payment_id=payment_id,
-                amount=amount,
-                received_sign=sign
-            ):
-                logger.warning(f"PayOK webhook: недействительная подпись для payment_id={payment_id}")
-                return 'Forbidden', 403
+        secret_key = str(get_setting("anypay_secret_key", "") or os.getenv("ANYPAY_SECRET_KEY", "")).strip()
+        if not secret_key:
+            logger.error("AnyPay webhook: secret_key не настроен в БД или .env")
+            return "Bad Request", 400
 
-            # Идемпотентность
-            existing_tx = get_transaction_by_provider_payment_id('payok', payment_id)
-            if existing_tx and existing_tx.get('status') in ('paid', 'completed', 'success'):
-                logger.info(f"PayOK webhook: транзакция {payment_id} уже выполнена ранее (idempotent OK).")
-                return 'OK', 200
+        if not AnyPayService.verify_notification_signature(data, secret_key):
+            logger.warning("AnyPay webhook: недействительная подпись sign")
+            return "Bad Request", 400
 
-            amount_val = float(amount) if amount else 0.0
-            metadata = find_and_complete_pending_transaction(
-                payment_id=payment_id,
-                amount_rub=amount_val if currency == 'RUB' else None,
-                payment_method='PayOK',
-                currency_name=currency,
-                amount_currency=amount_val
-            )
+        status = str(data.get("status") or "").lower()
+        if status != "paid":
+            logger.warning(f"AnyPay webhook: статус платежа '{status}' отличен от 'paid'")
+            return "Bad Request", 400
 
-            if not metadata and desc:
-                try:
-                    metadata = json.loads(desc)
-                except Exception:
-                    metadata = None
+        pay_id = str(data.get("pay_id") or "").strip()
+        if not pay_id:
+            logger.error("AnyPay webhook: отсутствует pay_id")
+            return "Bad Request", 400
 
-            if metadata:
-                metadata['payment_id'] = payment_id
-                metadata['payment_method'] = metadata.get('payment_method') or 'PayOK'
-                metadata['external_id'] = payok_id
-                bot = _bot_controller.get_bot_instance()
-                loop = current_app.config.get('EVENT_LOOP')
-                payment_processor = handlers.process_successful_payment
+        success = process_payment_success(order_id=pay_id, provider="anypay")
+        if success:
+            logger.info(f"AnyPay webhook: платёж {pay_id} успешно обработан.")
+            from flask import Response
+            return Response("OK", status=200, mimetype="text/plain")
+        else:
+            logger.error(f"AnyPay webhook: ошибка обработки заказа {pay_id}")
+            return "Bad Request", 400
 
-                if bot and loop and loop.is_running():
-                    asyncio.run_coroutine_threadsafe(payment_processor(bot, metadata), loop)
-                    logger.info(f"PayOK webhook: платёж {payment_id} успешно отправлен в обработчик.")
-                else:
-                    logger.error("PayOK webhook: бот или event loop не запущены.")
-            else:
-                logger.warning(f"PayOK webhook: транзакция {payment_id} подтверждена, но метаданные заказа отсутствуют.")
-
-            return 'OK', 200
-        except Exception as e:
-            logger.error(f"Ошибка в обработчике вебхука PayOK: {e}", exc_info=True)
-            return 'Error', 500
-
-    # --- Lava.top Webhook ---
+    # --- Platega.io Webhook ---
     @csrf.exempt
-    @flask_app.route('/webhook/lavatop', methods=['POST'])
-    @flask_app.route('/lavatop-webhook', methods=['POST'])
-    def lavatop_webhook_handler():
-        try:
-            logger.info("🔔 Получен webhook от Lava.top")
-            raw_body = request.get_data()
-            sig_header = (
-                request.headers.get('X-Signature') or
-                request.headers.get('Authorization') or
-                ''
-            )
+    @flask_app.route('/webhook/platega', methods=['POST'])
+    @flask_app.route('/platega-webhook', methods=['POST'])
+    def platega_webhook():
+        req_secret = request.headers.get("X-Secret", "")
+        conf_secret = get_setting("platega_secret", "")
 
-            from shop_bot.modules import lavatop_payment
-            webhook_key = get_setting('lavatop_webhook_key')
-            if not lavatop_payment.verify_lavatop_webhook_signature(raw_body, sig_header, webhook_key):
-                logger.warning("Lava.top webhook: недействительная подпись!")
-                return 'Forbidden', 403
+        if conf_secret and not PlategaService.verify_webhook_auth(req_secret, conf_secret):
+            logger.warning("Platega webhook: недействительный заголовок авторизации X-Secret")
+            return jsonify({"error": "unauthorized"}), 403
 
-            data = request.get_json(silent=True) or {}
-            logger.info(f"Lava.top webhook payload: {data}")
+        payload = request.get_json(silent=True) or {}
+        logger.info(f"Platega webhook payload: {payload}")
 
-            order_id = str(data.get('orderId') or data.get('order_id') or '').strip()
-            invoice_id = str(data.get('invoiceId') or data.get('invoice_id') or data.get('id') or '').strip()
-            status = str(data.get('status') or '').lower()
-            event_type = str(data.get('type') or data.get('event') or '').lower()
-            payment_id = order_id or invoice_id
+        status = str(payload.get("status") or "").upper()
+        order_id = payload.get("payload") or payload.get("orderId")
 
-            if not payment_id:
-                logger.warning("Lava.top webhook: отсутствует orderId/invoiceId")
-                return jsonify({"status": "error", "message": "missing orderId"}), 400
-
-            # Идемпотентность
-            existing_tx = get_transaction_by_provider_payment_id('lavatop', payment_id)
-            if existing_tx and existing_tx.get('status') in ('paid', 'completed', 'success'):
-                logger.info(f"Lava.top webhook: платёж {payment_id} уже был обработан (idempotent OK).")
+        if status in ["CONFIRMED", "SUCCESS", "PAID"]:
+            success = process_payment_success(order_id=order_id, provider="platega")
+            if success:
                 return jsonify({"status": "ok"}), 200
+            return jsonify({"error": "order processing failed"}), 500
 
-            is_paid = (
-                status in ('paid', 'success', 'completed') or
-                event_type in ('payment.success', 'invoice.paid')
-            )
+        return jsonify({"status": "ignored"}), 200
 
-            if is_paid:
-                amount_val = float(data.get('price') or data.get('amount') or 0.0)
-                currency = str(data.get('currency') or 'RUB').upper()
-
-                metadata = find_and_complete_pending_transaction(
-                    payment_id=payment_id,
-                    amount_rub=amount_val if currency == 'RUB' else None,
-                    payment_method='Lava.top',
-                    currency_name=currency,
-                    amount_currency=amount_val
-                )
-
-                if metadata:
-                    metadata['payment_id'] = payment_id
-                    metadata['payment_method'] = metadata.get('payment_method') or 'Lava.top'
-                    metadata['external_invoice_id'] = invoice_id
-                    bot = _bot_controller.get_bot_instance()
-                    loop = current_app.config.get('EVENT_LOOP')
-                    payment_processor = handlers.process_successful_payment
-
-                    if bot and loop and loop.is_running():
-                        asyncio.run_coroutine_threadsafe(payment_processor(bot, metadata), loop)
-                        logger.info(f"Lava.top webhook: платёж {payment_id} успешно отправлен в обработчик.")
-                    else:
-                        logger.error("Lava.top webhook: бот или event loop не запущены.")
-                else:
-                    logger.warning(f"Lava.top webhook: транзакция {payment_id} подтверждена, но метаданные отсутствуют.")
-
-            return jsonify({"status": "ok"}), 200
+    # --- Telegram Stars Webhook ---
+    @csrf.exempt
+    @flask_app.route('/webhook/stars', methods=['POST'])
+    @flask_app.route('/stars-webhook', methods=['POST'])
+    def stars_webhook_handler():
+        try:
+            data = request.get_json(silent=True) or (request.form.to_dict() if request.form else {}) or {}
+            logger.info(f"Stars webhook payload: {data}")
+            order_id = str(data.get('order_id') or data.get('payment_id') or data.get('payload') or '').strip()
+            if order_id:
+                success = process_payment_success(order_id=order_id, provider='stars')
+                if success:
+                    return jsonify({"status": "ok"}), 200
+            return jsonify({"status": "ignored"}), 200
         except Exception as e:
-            logger.error(f"Ошибка в обработчике вебхука Lava.top: {e}", exc_info=True)
-            return jsonify({"status": "error", "message": str(e)}), 500
+            logger.error(f"Ошибка в обработчике вебхука Stars: {e}", exc_info=True)
+            return jsonify({"error": str(e)}), 500
 
     return flask_app
 

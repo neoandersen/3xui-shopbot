@@ -323,3 +323,151 @@
   - В карточке ключа добавлена кнопка `[ ✏️ Переименовать ]`.
   - Состояние `KeyRename.waiting_for_key_name` с функцией `rename_user_key(key_id, user_id, new_name)`, строго проверяющей владельца на уровне SQL: `WHERE id = :key_id AND user_id = :telegram_id`.
 
+## 12. Модуль безопасности: Nginx Overflow Shield & Network Hardening
+
+### 12.1. Сервис аудита и применения параметров (`NginxHardeningService`)
+- **Расположение**: `src/shop_bot/services/nginx_hardening_service.py`
+- **Аудит конфигурации Nginx**:
+  - `server_tokens off;` — сокрытие версии Nginx в ответах и страницах ошибок.
+  - `client_header_buffer_size 1k;` и `large_client_header_buffers 4 8k;` — ограничение заголовков до 8 КБ (отсечение атак Buffer Overflow через URI/Cookie с кодом HTTP 414/400).
+  - `client_body_buffer_size 16k;` и `client_max_body_size 10m;` — предотвращение переполнения оперативной памяти воркеров телом запроса.
+  - Защитные таймауты против Slowloris: `client_header_timeout 10s;`, `client_body_timeout 10s;`, `send_timeout 10s;`, `keepalive_timeout 30s;`, `reset_timedout_connection on;`.
+  - Зоны лимитов соединений и запросов: `limit_conn_zone $binary_remote_addr zone=addr_limit:10m;`, `limit_req_zone $limit_req_exempt_key zone=req_limit:10m rate=15r/s;`.
+- **White-list для платёжных шлюзов**:
+  - Настроена директива `map $request_uri $limit_req_exempt_key`, возвращающая пустую строку `""` для путей `/webhook/*`, `/payok-webhook`, `/lavatop-webhook`, `/cryptomus-webhook`, `/yookassa-webhook`, `/aaio-webhook`, `/platega-webhook`.
+  - По спецификации Nginx пустой ключ исключает запрос из лимитирования, гарантируя 100% надёжную доставку платёжных коллбэков при пиковых нагрузках.
+- **Fail-Safe Engine с автоматическим откатом**:
+  - Физический статический файл конфигурации сохранён в проекте: `deploy/nginx/security_hardening.conf` и `src/shop_bot/config/security_hardening.conf`.
+  - Создан автономный скрипт развертывания `deploy/nginx/install_security_hardening.sh`.
+  - Перед наложением директив создается временной бэкап `security_hardening.conf.bak_<timestamp>`.
+  - Атомарная запись через `.tmp` в `/etc/nginx/conf.d/security_hardening.conf`.
+  - Валидация синтаксиса через `nginx -t`.
+  - При успехе — мягкий `nginx -s reload` без разрыва активных соединений.
+  - При синтаксической ошибке — немедленный автоматический откат к бэкапу и запись лога ошибки.
+
+### 12.2. Защита сетевого стека ядра Linux (Sysctl)
+- Контроль и применение параметров в `/etc/sysctl.d/99-neovpn-security.conf`:
+  - `net.ipv4.tcp_syncookies = 1` — отражение SYN-flood атак.
+  - `net.core.somaxconn = 4096` — расширение очереди прослушиваемых сокетов против переполнения.
+  - `net.ipv4.tcp_max_syn_backlog = 4096` — увеличение очереди полуоткрытых TCP-соединений.
+  - `net.ipv4.tcp_fin_timeout = 15` — ускоренное закрытие неактивных сокетов FIN-WAIT-2.
+
+### 12.3. Экспресс-парсер аномалий (Log Parser)
+- Мониторинг `access.log` и `error.log` Nginx за 24 часа.
+- Детекция попыток эксплойта буферов, атак и превышения лимитов запросов:
+  - `414` (URI Too Large — попытки переполнения буфера URI)
+  - `400` / `494` (Bad Request / Header Too Large — аномальные заголовки)
+  - `413` (Payload Too Large — превышение размера тела запроса)
+  - `429` (Too Many Requests — срабатывание rate limit `limit_req`)
+  - Падения воркеров Nginx (`worker process ... exited on signal / died`).
+
+### 12.4. Расширение API и Веб-интерфейс
+- **API эндпоинты** (`src/shop_bot/modules/enhanced_admin_routes.py`):
+  - `GET /api/security/nginx` (алиас `/admin/api/security/nginx`) — статус харденинга, директив, sysctl и счётчик аномалий.
+  - `POST /api/security/nginx/apply` (алиас `/admin/api/security/nginx/apply`) — безопасное применение Nginx Overflow Shield.
+  - `POST /api/security/sysctl/apply` (алиас `/admin/api/security/sysctl/apply`) — наложение сетевых параметров ядра.
+- **UI карточка в `security.html`**:
+  - «Защита от переполнения буферов (Nginx & Network Shield)» с динамическими индикаторами статуса, счётчиками 414/400/413/429 за 24ч, интерактивными кнопками наложения с подтверждением и терминальным блоком лога проверки `nginx -t`.
+
+### 12.5. Интеграция телеметрии Nginx и параметров ядра sysctl в Docker-окружение
+- **Проброс системных директорий хоста в `docker-compose.yml`**:
+  ```yaml
+  services:
+    3xui-shopbot:
+      build: .
+      restart: unless-stopped
+      ports:
+        - '1488:1488'
+      volumes:
+        - .:/app/project
+        - /var/log/nginx:/var/log/nginx:ro
+        - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
+        - /etc/sysctl.d:/etc/sysctl.d:ro
+      container_name: 3xui-shopbot
+      deploy:
+        resources:
+          limits:
+            cpus: '0.70'      # Разрешаем использовать не более 70% ядра процессора
+            memory: 400M      # Жесткий лимит оперативной памяти в 400 Мегабайт
+      logging:
+        driver: "json-file"
+        options:
+          max-size: "10m"   # Ограничиваем лог-файл до 10 МБ
+          max-file: "3"     # Храним не больше 3 таких файлов
+  ```
+- **Изоляция и безопасность (`:ro`)**:
+  - Все хостовые каталоги монтируются строго в режиме только для чтения (`:ro`), предотвращая несанкционированную модификацию конфигурации или журналов хоста из контейнера.
+  - Лимиты ресурсов (`cpus: '0.70'`, `memory: 400M`) предотвращают деградацию хоста и OOM-сбои.
+  - Ротация журналов Docker (`json-file`, `max-size: 10m`, `max-file: 3`) защищает диск от переполнения.
+- **Гибридный аудит параметров ядра (Host Kernel Telemetry)**:
+  - Из-за изоляции сетевых пространств (network namespaces) контейнер Docker видит локальные значения виртуального сетевого моста (`net.ipv4.tcp_max_syn_backlog = 128`, `net.ipv4.tcp_fin_timeout = 60`), в то время как физический хост защищён значениями `4096` и `15`.
+  - Реализован гибридный механизм валидации: если локальный `/proc/sys` возвращает изолированные дефолты контейнера, `NginxHardeningService.audit_sysctl()` считывает конфигурационные файлы хоста из примонтированного `/etc/sysctl.d/` (`99-security-hardening.conf`, `99-neovpn-security.conf`) или слепок `data/sysctl_status.json`.
+  - При значениях $\ge 4096$ (для очереди SYN) и $\le 15$ (для таймаута FIN) параметры помечаются как `"ok": True` с указанием источника (`"source": "host_sysctl_conf"` или `"source": "host_sysctl_snapshot"`).
+### 12.5. Интеграция телеметрии Nginx и параметров ядра sysctl в Docker-окружение
+- **Проброс системных директорий хоста в `docker-compose.yml`**:
+  ```yaml
+  services:
+    3xui-shopbot:
+      build: .
+      restart: unless-stopped
+      ports:
+        - '1488:1488'
+      volumes:
+        - .:/app/project
+        - /var/log/nginx:/var/log/nginx:ro
+        - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
+        - /etc/sysctl.d:/etc/sysctl.d:ro
+      container_name: 3xui-shopbot
+      deploy:
+        resources:
+          limits:
+            cpus: '0.70'      # Разрешаем использовать не более 70% ядра процессора
+            memory: 400M      # Жесткий лимит оперативной памяти в 400 Мегабайт
+      logging:
+        driver: "json-file"
+        options:
+          max-size: "10m"   # Ограничиваем лог-файл до 10 МБ
+          max-file: "3"     # Храним не больше 3 таких файлов
+  ```
+- **Изоляция и безопасность (`:ro`)**:
+  - Все хостовые каталоги монтируются строго в режиме только для чтения (`:ro`), предотвращая несанкционированную модификацию конфигурации или журналов хоста из контейнера.
+  - Лимиты ресурсов (`cpus: '0.70'`, `memory: 400M`) предотвращают деградацию хоста и OOM-сбои.
+  - Ротация журналов Docker (`json-file`, `max-size: 10m`, `max-file: 3`) защищает диск от переполнения.
+- **Гибридный аудит параметров ядра (Host Kernel Telemetry)**:
+  - Из-за изоляции сетевых пространств (network namespaces) контейнер Docker видит локальные значения виртуального сетевого моста (`net.ipv4.tcp_max_syn_backlog = 128`, `net.ipv4.tcp_fin_timeout = 60`), в то время как физический хост защищён значениями `4096` и `15`.
+  - Реализован гибридный механизм валидации: если локальный `/proc/sys` возвращает изолированные дефолты контейнера, `NginxHardeningService.audit_sysctl()` считывает конфигурационные файлы хоста из примонтированного `/etc/sysctl.d/` (`99-security-hardening.conf`, `99-neovpn-security.conf`) или слепок `data/sysctl_status.json`.
+  - При значениях $\ge 4096$ (для очереди SYN) и $\le 15$ (для таймаута FIN) параметры помечаются как `"ok": True` с указанием источника (`"source": "host_sysctl_conf"` или `"source": "host_sysctl_snapshot"`).
+- **Graceful Fallback & ENV-конфигурируемость**:
+  - Пути конфигурируются через переменные окружения (`NGINX_CONF_DIR`, `CONF_D_DIR`, `HARDENING_CONF_PATH`, `SYSCTL_D_DIR`, `SYSCTL_CONF_PATH`, `NGINX_ACCESS_LOG`, `NGINX_ERROR_LOG`) со стандартными дефолтами.
+  - При отсутствии каталогов или журналов сервис логирует понятное предупреждение `logger.warning` и возвращает базовые безопасные метрики без падения приложения.
+  - Запросы на изменение настроек изнутри изолированного контейнера формируют триггеры `run_nginx_harden.trigger` / `run_sysctl_harden.trigger` для хостового демона.
+
+---
+
+## 13. Замена платёжного модуля Lava.top на AnyPay (SCI / Webhook IPN) и демонтаж устаревшего кода
+
+### 13.1. Архитектура интеграции AnyPay
+- **Модуль сервиса**: `app/services/payments/anypay.py` (`AnyPayService`).
+- **Модуль интеграции с ботом**: `src/shop_bot/modules/anypay_payment.py`.
+- **Генерация ссылки на оплату (Redirect SCI)**:
+  - Базовый URL: `https://anypay.io/merchant`.
+  - Параметры: `merchant_id`, `pay_id`, `amount`, `currency`, `desc`, `success_url`, `fail_url`, `sign`.
+  - Контрольная подпись создания платежа:
+    $$\text{sign} = \text{SHA-256}(\text{currency} : \text{amount} : \text{secret\_key} : \text{merchant\_id} : \text{pay\_id})$$
+- **Обработка входящего уведомления (Webhook / IPN Callback)**:
+  - Маршруты: `POST /webhook/anypay`, `POST /anypay-webhook`, `POST /payment/anypay/notify`.
+  - Контрольная подпись IPN оповещения:
+    $$\text{expected\_sign} = \text{SHA-256}(\text{currency} : \text{amount} : \text{pay\_id} : \text{merchant\_id} : \text{status} : \text{secret\_key})$$
+  - Строгий ответ сервера: HTTP 200 со строкой `"OK"` (`text/plain`).
+  - При несовпадении подписи или статусе отличном от `paid` — HTTP 400 Bad Request.
+
+### 13.2. Полный демонтаж Lava.top
+- Удалены файлы: `app/services/payments/lavatop.py` и `src/shop_bot/modules/lavatop_payment.py`.
+- Удалены неиспользуемые импорты и классы в `app/services/payments/__init__.py`, `src/shop_bot/bot/handlers.py`, `src/shop_bot/webhook_server/app.py`.
+- В инлайн-клавиатурах бота (`src/shop_bot/bot/keyboards.py`) кнопки Lava.top заменены на `«💳 Банковские карты / СБП / Pay (AnyPay)»`.
+- В веб-панели управления (`settings.html`) блок настроек Lava.top заменен на AnyPay (`anypay_project_id`, `anypay_secret_key`, `anypay_api_key`, кнопка быстрого копирования URL вебхука).
+- В белом списке Nginx харденинга устаревший маршрут `/lavatop-webhook` заменен на `/anypay-webhook` и `/payment/anypay/notify`.
+- Таблица транзакций и исторические платежи пользователей сохранены без изменений.
+
+
+

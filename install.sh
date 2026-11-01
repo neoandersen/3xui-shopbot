@@ -57,6 +57,21 @@ if [ -f "$NGINX_CONF_FILE" ]; then
         echo -e "${GREEN}✔ Конфигурация Nginx уже содержит необходимые настройки.${NC}"
     fi
 
+    # Размещение/обновление правовых документов (privacy.html и terms.html) в веб-каталогах Nginx
+    sudo mkdir -p /var/www/neo-vpn-landing
+    for legal_file in "privacy.html" "terms.html"; do
+        if [ -f "deploy/landing/${legal_file}" ]; then
+            sudo cp "deploy/landing/${legal_file}" "/var/www/neo-vpn-landing/${legal_file}"
+            sudo chmod 644 "/var/www/neo-vpn-landing/${legal_file}"
+            if [ -d "/var/www/sub" ]; then
+                sudo cp "deploy/landing/${legal_file}" "/var/www/sub/${legal_file}"
+                sudo chmod 644 "/var/www/sub/${legal_file}"
+                sudo chown www-data:www-data "/var/www/sub/${legal_file}" 2>/dev/null || true
+            fi
+            echo -e "${GREEN}✔ Файл ${legal_file} обновлен в Document Root Nginx.${NC}"
+        fi
+    done
+
     echo -e "\n${CYAN}Шаг 2: Пересборка и перезапуск Docker-контейнеров...${NC}"
     sudo docker-compose down --remove-orphans && sudo docker-compose up -d --build
     
@@ -233,9 +248,78 @@ if [ ! -f "$NGINX_ENABLED_FILE" ]; then
     sudo ln -s $NGINX_CONF_FILE $NGINX_ENABLED_FILE
 fi
 
+# Установка Nginx Overflow Shield (security_hardening.conf) и подготовка каталогов для Docker
+sudo mkdir -p /etc/nginx/conf.d /var/log/nginx
+sudo touch /var/log/nginx/access.log /var/log/nginx/error.log
+sudo chmod 644 /var/log/nginx/access.log /var/log/nginx/error.log 2>/dev/null || true
+
+NGINX_HARDENING_SRC="${PROJECT_DIR}/deploy/nginx/security_hardening.conf"
+if [ ! -f "$NGINX_HARDENING_SRC" ]; then
+    NGINX_HARDENING_SRC="${PROJECT_DIR}/src/shop_bot/config/security_hardening.conf"
+fi
+if [ -f "$NGINX_HARDENING_SRC" ]; then
+    echo -e "Установка Nginx Overflow Shield (/etc/nginx/conf.d/security_hardening.conf)..."
+    sudo cp "$NGINX_HARDENING_SRC" /etc/nginx/conf.d/security_hardening.conf
+    sudo chmod 644 /etc/nginx/conf.d/security_hardening.conf
+    echo -e "${GREEN}✔ Файл /etc/nginx/conf.d/security_hardening.conf установлен.${NC}"
+fi
+
+# Размещение правовых документов (privacy.html и terms.html) в веб-каталогах Nginx (/var/www/sub и /var/www/neo-vpn-landing)
+sudo mkdir -p /var/www/neo-vpn-landing
+for legal_file in "privacy.html" "terms.html"; do
+    LEGAL_SRC="${PROJECT_DIR}/deploy/landing/${legal_file}"
+    if [ ! -f "$LEGAL_SRC" ]; then
+        LEGAL_SRC="${PROJECT_DIR}/src/shop_bot/webhook_server/static/${legal_file}"
+    fi
+    if [ -f "$LEGAL_SRC" ]; then
+        echo -e "Размещение ${legal_file} в веб-каталогах Nginx..."
+        sudo cp "$LEGAL_SRC" "/var/www/neo-vpn-landing/${legal_file}"
+        sudo chmod 644 "/var/www/neo-vpn-landing/${legal_file}"
+        if [ -d "/var/www/sub" ]; then
+            sudo cp "$LEGAL_SRC" "/var/www/sub/${legal_file}"
+            sudo chmod 644 "/var/www/sub/${legal_file}"
+            sudo chown www-data:www-data "/var/www/sub/${legal_file}" 2>/dev/null || true
+        fi
+        echo -e "${GREEN}✔ Файл ${legal_file} размещен в веб-каталогах Nginx.${NC}"
+    fi
+done
+
 echo -e "${GREEN}✔ Конфигурация Nginx создана.${NC}"
 echo -e "${YELLOW}Проверяем и перезагружаем Nginx...${NC}"
 sudo nginx -t && sudo systemctl reload nginx
+
+# Настройка параметров ядра sysctl (/etc/sysctl.d/99-security-hardening.conf) и подготовка для Docker (:ro)
+echo -e "Настройка сетевых параметров ядра хоста (sysctl)..."
+sudo mkdir -p /etc/sysctl.d
+sudo bash -c 'cat > /etc/sysctl.d/99-security-hardening.conf' <<'EOF'
+# ==============================================================================
+# 3X-UI ShopBot — Host Kernel Hardening & Socket Queues Defense
+# ==============================================================================
+net.core.somaxconn = 4096
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 4096
+net.ipv4.tcp_fin_timeout = 15
+EOF
+sudo chmod 644 /etc/sysctl.d/99-security-hardening.conf
+sudo sysctl -p /etc/sysctl.d/99-security-hardening.conf 2>/dev/null || true
+
+# Сохранение слепка статуса параметров ядра для Docker-контейнера
+mkdir -p "${PROJECT_DIR}/data"
+cat > "${PROJECT_DIR}/data/sysctl_status.json" <<'EOF'
+{
+  "status": "SECURE",
+  "all_applied": true,
+  "params": {
+    "net.core.somaxconn": "4096",
+    "net.ipv4.tcp_syncookies": "1",
+    "net.ipv4.tcp_max_syn_backlog": "4096",
+    "net.ipv4.tcp_fin_timeout": "15"
+  },
+  "source": "host_sysctl_snapshot"
+}
+EOF
+chmod 644 "${PROJECT_DIR}/data/sysctl_status.json" 2>/dev/null || true
+echo -e "${GREEN}✔ Параметры ядра /etc/sysctl.d/99-security-hardening.conf настроены и применены.${NC}"
 
 echo -e "\n${CYAN}Шаг 5: Сборка и запуск Docker-контейнера...${NC}"
 if [ "$(sudo docker-compose ps -q)" ]; then

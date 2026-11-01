@@ -39,6 +39,12 @@ def _bind_session_to_api(api: Api, session: requests.Session) -> None:
     setattr(api, "http_session", session)
     setattr(api, "_http_session", session)
 
+    # Ensure host attribute is available on top-level api instance
+    if not getattr(api, "host", None):
+        h = getattr(getattr(api, "client", None), "host", None) or getattr(getattr(api, "inbound", None), "host", None)
+        if h:
+            setattr(api, "host", h)
+
     sub_apis = [
         getattr(api, "client", None),
         getattr(api, "inbound", None),
@@ -107,6 +113,7 @@ def login_to_host(host_url: str, username: str, password: str, inbound_id: int) 
 
         # 3. Initialize py3xui Api and bind session
         api = Api(host=host_url, username=username, password=password)
+        setattr(api, "host", base_url)
         _bind_session_to_api(api, session)
 
         current_csrf = session.headers.get("X-Csrf-Token")
@@ -208,100 +215,191 @@ def get_subscription_link(user_uuid: str, host_url: str, host_name: str | None =
 
 def update_or_create_client_on_panel(api: Api, inbound_id: int, email: str, days_to_add: int | None = None, target_expiry_ms: int | None = None) -> tuple[str | None, int | None, str | None]:
     try:
-        inbound_to_modify = api.inbound.get_by_id(inbound_id)
-        if not inbound_to_modify:
-            raise ValueError(f"Could not find inbound with ID {inbound_id}")
+        base_url = (
+            getattr(api, "host", None)
+            or getattr(getattr(api, "client", None), "host", None)
+            or getattr(getattr(api, "inbound", None), "host", None)
+            or ""
+        )
+        base_url = str(base_url).rstrip("/")
+        session = getattr(api, "http_session", None) or getattr(api, "_http_session", None)
+        if not session and hasattr(api, "client"):
+            session = getattr(api.client, "http_session", None) or getattr(api.client, "_http_session", None)
+        if not session:
+            session = get_or_create_host_session(base_url)
 
-        if inbound_to_modify.settings.clients is None:
-            inbound_to_modify.settings.clients = []
-            
-        client_index = -1
-        for i, client in enumerate(inbound_to_modify.settings.clients):
-            if client.email == email:
-                client_index = i
-                break
-        
-        # Determine new expiry time
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        target_inbounds = [1, 2]
+
+        # 1. Получение списка клиентов хоста (для проверки существования):
+        # Запрос: GET f"{base_url}/panel/api/clients/list"
+        clients_list = []
+        try:
+            r = session.get(f"{base_url}/panel/api/clients/list", timeout=10, verify=False)
+            if r.status_code == 200:
+                clients_list = r.json().get('obj', []) or []
+            else:
+                logger.warning(f"GET /panel/api/clients/list вернул статус {r.status_code}: {r.text[:200]}")
+        except Exception as list_err:
+            logger.warning(f"Ошибка при запросе списка клиентов 3X-UI: {list_err}")
+
+        # Находим клиента по c.get('email') == email
+        existing_client = next((c for c in clients_list if c.get('email') == email), None)
+
+        # Вычисляем new_expiry_ms
         if target_expiry_ms is not None:
             new_expiry_ms = int(target_expiry_ms)
         else:
             if days_to_add is None:
-                raise ValueError("Either days_to_add or target_expiry_ms must be provided")
-            if client_index != -1:
-                existing_client = inbound_to_modify.settings.clients[client_index]
-                if existing_client.expiry_time > int(datetime.now().timestamp() * 1000):
-                    current_expiry_dt = datetime.fromtimestamp(existing_client.expiry_time / 1000)
-                    new_expiry_dt = current_expiry_dt + timedelta(days=days_to_add)
+                raise ValueError("Либо days_to_add, либо target_expiry_ms должны быть указаны")
+            now_ms = int(datetime.now().timestamp() * 1000)
+            if existing_client:
+                curr_exp = int(existing_client.get('expiryTime') or 0)
+                if curr_exp > now_ms:
+                    new_expiry_dt = datetime.fromtimestamp(curr_exp / 1000) + timedelta(days=days_to_add)
                 else:
                     new_expiry_dt = datetime.now() + timedelta(days=days_to_add)
             else:
                 new_expiry_dt = datetime.now() + timedelta(days=days_to_add)
-
             new_expiry_ms = int(new_expiry_dt.timestamp() * 1000)
 
-        client_sub_token: str | None = None
-
-        if client_index != -1:
-            # Disable auto-reset/auto-renew on extension
-            try:
-                inbound_to_modify.settings.clients[client_index].reset = 0
-            except Exception:
-                pass
-            inbound_to_modify.settings.clients[client_index].enable = True
-            inbound_to_modify.settings.clients[client_index].expiry_time = new_expiry_ms
-
-            existing_client = inbound_to_modify.settings.clients[client_index]
-            client_uuid = existing_client.id
-            try:
-                sub_token_existing = None
-                for attr in ("subId", "subscription", "sub_id"):
-                    if hasattr(existing_client, attr):
-                        val = getattr(existing_client, attr)
-                        if val:
-                            sub_token_existing = val
-                            break
-                if sub_token_existing:
-                    client_sub_token = sub_token_existing
+        # 3. ПРОДЛЕНИЕ / ОБНОВЛЕНИЕ клиента (если клиент уже найден в списке):
+        if existing_client:
+            client_uuid = existing_client.get('uuid') or existing_client.get('id')
+            if not client_uuid or not isinstance(client_uuid, str) or len(client_uuid) < 10:
+                db_key = get_key_by_email(email)
+                if db_key and db_key.get('xui_client_uuid'):
+                    client_uuid = db_key['xui_client_uuid']
                 else:
-                    import secrets
-                    client_sub_token = secrets.token_hex(12)
-                    for attr in ("subId", "subscription", "sub_id"):
-                        try:
-                            setattr(existing_client, attr, client_sub_token)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-        else:
-            client_uuid = str(uuid.uuid4())
-            new_client = Client(
-                id=client_uuid,
-                email=email,
-                enable=True,
-                flow="xtls-rprx-vision",
-                expiry_time=new_expiry_ms
-            )
-            # Ensure no auto-reset/auto-renew for new clients
-            try:
-                setattr(new_client, "reset", 0)
-            except Exception:
-                pass
+                    client_uuid = str(uuid.uuid4())
+            else:
+                client_uuid = str(client_uuid)
 
-            try:
+            client_sub_token = existing_client.get('subId') or existing_client.get('subscription')
+            if not client_sub_token:
                 import secrets
                 client_sub_token = secrets.token_hex(12)
-                for attr in ("subId", "subscription", "sub_id"):
-                    try:
-                        setattr(new_client, attr, client_sub_token)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            inbound_to_modify.settings.clients.append(new_client)
+            else:
+                client_sub_token = str(client_sub_token)
 
-        api.inbound.update(inbound_id, inbound_to_modify)
+            # Нативные эндпоинты 3X-UI v3.10+
+            url_email = f"{base_url}/panel/api/clients/update/{email}"
+            url_std = f"{base_url}/panel/api/clients/update"
 
-        return client_uuid, new_expiry_ms, client_sub_token
+            payload_direct = {
+                "id": str(client_uuid),
+                "email": str(email),
+                "expiryTime": int(new_expiry_ms),
+                "enable": True,
+                "subId": str(client_sub_token),
+                "reset": 0,
+                "inboundIds": target_inbounds
+            }
+            payload_wrapped = {
+                "client": {
+                    "id": str(client_uuid),
+                    "email": str(email),
+                    "expiryTime": int(new_expiry_ms),
+                    "enable": True,
+                    "subId": str(client_sub_token),
+                    "reset": 0
+                },
+                "inboundIds": target_inbounds
+            }
+
+            updated = False
+            try:
+                res = session.post(url_email, json=payload_direct, headers=headers, timeout=10, verify=False)
+                if res.status_code == 200 and res.json().get('success'):
+                    logger.info(f"Клиент '{email}' ({client_uuid}) успешно обновлён в 3X-UI через {url_email}.")
+                    updated = True
+            except Exception as up_err:
+                logger.warning(f"Ошибка при обновлении через {url_email}: {up_err}")
+
+            if not updated:
+                try:
+                    res_std = session.post(url_std, json=payload_wrapped, headers=headers, timeout=10, verify=False)
+                    if res_std.status_code == 200 and res_std.json().get('success'):
+                        logger.info(f"Клиент '{email}' ({client_uuid}) успешно обновлён в 3X-UI через {url_std}.")
+                        updated = True
+                except Exception as up_std_err:
+                    logger.warning(f"Ошибка при обновлении через {url_std}: {up_std_err}")
+
+            if not updated:
+                logger.warning(f"Нативный API update не сработал для '{email}', выполняю py3xui fallback...")
+                try:
+                    inbound_to_modify = api.inbound.get_by_id(inbound_id)
+                    if inbound_to_modify and inbound_to_modify.settings and inbound_to_modify.settings.clients:
+                        for cl in inbound_to_modify.settings.clients:
+                            if getattr(cl, 'email', None) == email:
+                                cl.expiry_time = new_expiry_ms
+                                cl.enable = True
+                                cl.reset = 0
+                                if hasattr(api, 'client') and hasattr(api.client, 'update'):
+                                    api.client.update(client_uuid, cl)
+                                    logger.info(f"Клиент {email} обновлен через api.client.update (fallback).")
+                                    updated = True
+                                    break
+                except Exception as fb_err:
+                    logger.warning(f"py3xui fallback error: {fb_err}")
+
+            return str(client_uuid), int(new_expiry_ms), str(client_sub_token)
+
+        # 2. Добавление НОВОГО клиента:
+        else:
+            import secrets
+            db_key = get_key_by_email(email)
+            if db_key and db_key.get('xui_client_uuid'):
+                client_uuid = str(db_key['xui_client_uuid'])
+            else:
+                client_uuid = str(uuid.uuid4())
+
+            client_sub_token = secrets.token_hex(12)
+
+            payload = {
+                "client": {
+                    "id": str(client_uuid),
+                    "email": str(email),
+                    "flow": "xtls-rprx-vision",
+                    "limitIp": 0,
+                    "totalGB": 0,
+                    "expiryTime": int(new_expiry_ms),
+                    "enable": True,
+                    "tgId": 0,
+                    "subId": str(client_sub_token),
+                    "reset": 0
+                },
+                "inboundIds": target_inbounds
+            }
+
+            url = f"{base_url}/panel/api/clients/add"
+            res = session.post(url, json=payload, headers=headers, timeout=10, verify=False)
+            if res.status_code == 200 and res.json().get('success'):
+                logger.info(f"Клиент '{email}' успешно создан в 3X-UI (inboundIds: {target_inbounds}).")
+                return str(client_uuid), int(new_expiry_ms), str(client_sub_token)
+            else:
+                logger.warning(f"POST {url} вернул status {res.status_code}: {res.text}. Пробуем fallback...")
+                try:
+                    new_cl = Client(
+                        id=client_uuid,
+                        email=email,
+                        enable=True,
+                        flow="xtls-rprx-vision",
+                        expiry_time=new_expiry_ms
+                    )
+                    setattr(new_cl, "reset", 0)
+                    setattr(new_cl, "subId", client_sub_token)
+                    if hasattr(api, 'client') and hasattr(api.client, 'add'):
+                        api.client.add(inbound_id=inbound_id, clients=[new_cl])
+                        logger.info(f"Клиент {email} добавлен через api.client.add (fallback).")
+                        return str(client_uuid), int(new_expiry_ms), str(client_sub_token)
+                except Exception as add_fb_err:
+                    logger.error(f"py3xui add fallback failed: {add_fb_err}")
+
+                return str(client_uuid), int(new_expiry_ms), str(client_sub_token)
 
     except Exception as e:
         logger.error(f"Ошибка в update_or_create_client_on_panel: {e}", exc_info=True)
@@ -322,7 +420,9 @@ async def create_or_update_key_on_host(host_name: str, email: str, days_to_add: 
     if not api or not inbound:
         logger.error(f"Сбой рабочего процесса: Не удалось войти или найти inbound на хосте '{host_name}'.")
         return None
-        
+
+    setattr(api, "host", host_data['host_url'].rstrip('/'))
+
     # Prefer exact expiry when provided (e.g., switching hosts), otherwise add days (purchase/extend/trial)
     client_uuid, new_expiry_ms, client_sub_token = update_or_create_client_on_panel(
         api, inbound.id, email, days_to_add=days_to_add, target_expiry_ms=expiry_timestamp_ms
@@ -366,26 +466,42 @@ async def get_key_details_from_host(key_data: dict) -> dict | None:
     if not api or not inbound: return None
 
     client_sub_token = None
+    base_url = host_db_data['host_url'].rstrip('/')
+    session = getattr(api, "http_session", None) or getattr(api, "_http_session", None) or get_or_create_host_session(base_url)
+
+    # 1. Попробуем извлечь subId из нативного API /panel/api/clients/list
     try:
-        if inbound.settings and inbound.settings.clients:
-            for client in inbound.settings.clients:
-                if getattr(client, "id", None) == key_data['xui_client_uuid'] or getattr(client, "email", None) == key_data.get('email'):
-                    candidate_fields = ("subId", "subscription", "sub_id", "subscriptionId", "subscription_token")
-                    for attr in candidate_fields:
-                        val = None
-                        if hasattr(client, attr):
-                            val = getattr(client, attr)
-                        else:
-                            try:
+        r = session.get(f"{base_url}/panel/api/clients/list", timeout=10, verify=False)
+        if r.status_code == 200:
+            clients_list = r.json().get('obj', []) or []
+            for c in clients_list:
+                if (c.get('uuid') == key_data.get('xui_client_uuid') or 
+                    str(c.get('id')) == str(key_data.get('xui_client_uuid')) or 
+                    c.get('email') == key_data.get('email')):
+                    client_sub_token = c.get('subId') or c.get('subscription')
+                    if client_sub_token:
+                        break
+    except Exception as list_err:
+        logger.debug(f"get_key_details_from_host: не удалось прочесть /panel/api/clients/list: {list_err}")
+
+    # 2. Fallback на inbound.settings.clients
+    if not client_sub_token:
+        try:
+            if inbound.settings and inbound.settings.clients:
+                for client in inbound.settings.clients:
+                    if getattr(client, "id", None) == key_data['xui_client_uuid'] or getattr(client, "email", None) == key_data.get('email'):
+                        candidate_fields = ("subId", "subscription", "sub_id", "subscriptionId", "subscription_token")
+                        for attr in candidate_fields:
+                            val = getattr(client, attr, None)
+                            if not val and hasattr(client, "get"):
                                 val = client.get(attr)
-                            except Exception:
-                                pass
-                        if val:
-                            client_sub_token = val
-                            break
-                    break
-    except Exception:
-        pass
+                            if val:
+                                client_sub_token = val
+                                break
+                        break
+        except Exception:
+            pass
+
     connection_string = get_subscription_link(key_data['xui_client_uuid'], host_db_data['host_url'], host_name, sub_token=client_sub_token)
     return {"connection_string": connection_string}
 
@@ -402,20 +518,42 @@ async def delete_client_on_host(host_name: str, client_email: str) -> bool:
         inbound_id=host_data['host_inbound_id']
     )
 
-    if not api or not inbound:
-        logger.error(f"Не удалось удалить клиента: ошибка входа или поиска inbound для хоста '{host_name}'.")
+    if not api:
+        logger.error(f"Не удалось удалить клиента: ошибка входа на хост '{host_name}'.")
         return False
         
     try:
+        base_url = host_data['host_url'].rstrip('/')
+        session = getattr(api, "http_session", None) or getattr(api, "_http_session", None) or get_or_create_host_session(base_url)
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        del_url = f"{base_url}/panel/api/clients/del/{client_email}"
+        res = session.post(del_url, headers=headers, timeout=10, verify=False)
+        if res.status_code == 200:
+            data = res.json() if res.text else {}
+            if data.get('success'):
+                logger.info(f"Клиент '{client_email}' успешно удалён с хоста '{host_name}' через {del_url}.")
+                return True
+            else:
+                msg = str(data.get('msg', ''))
+                if 'not found' in msg.lower():
+                    logger.info(f"Клиент '{client_email}' уже отсутствует на хосте '{host_name}': {msg}")
+                    return True
+                logger.warning(f"Удаление через {del_url} вернуло: {msg}")
+
+        # Fallback to py3xui
         client_to_delete = get_key_by_email(client_email)
-        if client_to_delete:
-            api.client.delete(inbound.id, client_to_delete['xui_client_uuid'])
-            logger.info(f"Клиент '{client_email}' успешно удалён с хоста '{host_name}'.")
-            return True
-        else:
-            logger.warning(f"Клиент с email '{client_email}' не найден на хосте '{host_name}' для удаления (возможно, уже удалён).")
-            return True
-            
+        if client_to_delete and client_to_delete.get('xui_client_uuid') and inbound:
+            try:
+                api.client.delete(inbound.id, client_to_delete['xui_client_uuid'])
+                logger.info(f"Клиент '{client_email}' удалён через api.client.delete (fallback).")
+                return True
+            except Exception as fb_err:
+                logger.warning(f"api.client.delete fallback error: {fb_err}")
+                return False
+        return True
     except Exception as e:
         logger.error(f"Не удалось удалить клиента '{client_email}' с хоста '{host_name}': {e}", exc_info=True)
         return False

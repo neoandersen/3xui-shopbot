@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="#-быстрый-старт-установка-под-ключ">Установка и обновление</a> •
-  <a href="#-нововведения-в-релизе-v130-stable">Что нового в v1.3.0</a> •
+  <a href="#-нововведения-в-релизе-v140-stable">Что нового в v1.4.0</a> •
   <a href="#-архитектура-и-возможности">Возможности</a> •
   <a href="#-настройка-платежных-шлюзов">Платежи</a> •
   <a href="#-ai-онбординг-и-атрибуция">AI и Маркетинг</a> •
@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-1.3.0--stable-blue?style=flat-square&logo=git">
+  <img alt="version" src="https://img.shields.io/badge/version-1.4.0--stable-blue?style=flat-square&logo=git">
   <img alt="python" src="https://img.shields.io/badge/python-≥3.11-3776AB?style=flat-square&logo=python">
   <img alt="docker" src="https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker">
   <img alt="telegram" src="https://img.shields.io/badge/aiogram-3.x-2CA5E0?style=flat-square&logo=telegram">
@@ -25,9 +25,9 @@
 
 ---
 
-## ⚡ Нововведения в релизе v1.3.0 Stable
+## ⚡ Нововведения в релизе v1.4.0 Stable
 
-Версия **v1.3.0** — крупный стабильный релиз, переводящий систему на мультивалютный биллинг, архитектуру множественных ключей (1:N) и комплексную защиту периметра хостов:
+Версия **v1.4.0** — крупный стабильный релиз с мультивалютным биллингом, поддержкой платёжных шлюзов (Heleket, YooMoney, AnyPay, PayOK, LavaTop, Cryptomus), архитектурой множественных ключей (1:N) и комплексной защитой периметра хостов:
 
 ### 1. Мультивалютное биллинговое ядро (USD Base)
 - **Базовая валюта USD ($)**: Все расчеты стоимости тарифов, пополнения баланса, реферальные начисления и статистика переведены на доллары США (`USD`).
@@ -86,13 +86,15 @@
   <tr>
     <td><b>Платежные шлюзы</b></td>
     <td>
-      • <b>PayOK</b>: банковские карты РФ, СБП и P2P-платежи без оформления ИП (MD5-подпись)<br>
-      • <b>Lava.top</b>: прием карт РФ, зарубежных карт и СБП для цифровых услуг (HMAC-SHA256)<br>
+      • <b>AnyPay</b>: банковские карты РФ/Мир, зарубежные карты, СБП и Pay (SCI / IPN SHA-256)<br>
+      • <b>Platega.io</b>: банковские карты РФ и СБП (авторизация по X-Secret)<br>
       • <b>Aaio</b>: банковские карты (World, UAH, RUB, KZT) и СБП (0% для самозанятых/ИП)<br>
       • <b>Cryptomus</b>: прием криптовалют (USDT, USDC, BTC, TON, ETH, LTC, XMR)<br>
+      • <b>Heleket</b>: прием криптовалют через мерчант Heleket (автоматическая валидация подписи MD5)<br>
+      • <b>CryptoBot</b>: прием криптовалютных чеков и инвойсов в Telegram Crypto Pay<br>
+      • <b>YooMoney</b>: прямые переводы на кошелек ЮMoney через Quickpay и проверку по API<br>
       • <b>Telegram Stars</b>: официальные цифровые платежи внутри Telegram<br>
-      • <b>YooKassa</b>: российские карты, СБП, опциональная фискализация чеков<br>
-      • <b>CryptoBot & Heleket</b>: прием криптовалютных чеков и инвойсов
+      • <b>YooKassa</b>: российские карты, СБП, опциональная фискализация чеков
     </td>
   </tr>
   <tr>
@@ -178,15 +180,17 @@ docker compose logs -f 3xui-shopbot
 
 Настройка шлюзов производится в веб-панели (**Настройки -> Настройки платежных систем**):
 
-### PayOK (Банковские карты РФ, СБП, P2P)
-- Зарегистрируйте магазин на сервисе [PayOK](https://payok.io).
-- Укажите в панели: `payok_shop_id`, `payok_secret_key`, выберите валюту счетов (`RUB` или `USD`).
-- URL вебхука в ЛК PayOK: `https://panel.your-domain.com/webhook/payok`.
+### AnyPay (Банковские карты РФ/Мир, СБП, Pay)
+- Создайте проект в сервисе [AnyPay.io](https://anypay.io).
+- Укажите в панели или `.env`: `ANYPAY_PROJECT_ID` (ID проекта) и `ANYPAY_SECRET_KEY` (Секретный ключ).
+- Подпись SCI и валидация IPN оповещений по алгоритму SHA-256.
+- Webhook URL: `https://panel.yourdomain.com:8443/webhook/anypay`.
 
-### Lava.top (Карты РФ/Мир, СБП для цифровых услуг)
-- Создайте оффер для цифровых товаров в сервисе [Lava.top](https://gate.lava.top).
-- Укажите в панели: `lavatop_api_key`, `lavatop_offer_id`, `lavatop_webhook_key`.
-- URL вебхука в ЛК Lava.top: `https://panel.your-domain.com/webhook/lavatop`.
+### Platega.io (Банковские карты РФ, СБП)
+- Зарегистрируйтесь на сервисе [Platega.io](https://platega.io).
+- Укажите в панели: `platega_merchant_id` (Merchant ID) и `platega_secret` (Secret Key).
+- Проверка подлинности запроса по заголовку `X-Secret`.
+- Webhook URL: `https://panel.yourdomain.com:8443/webhook/platega`.
 
 ### Aaio (Банковские карты, СБП)
 - Создайте мерчант в сервисе Aaio.
@@ -202,9 +206,21 @@ docker compose logs -f 3xui-shopbot
 - Включите платежи в Stars через `@BotFather` (`/mybots` -> *Bot Settings* -> *Payments*).
 - Включите переключатель Stars в панели управления ботом.
 
+### Heleket (Криптовалюты)
+- Зарегистрируйтесь на сервисе [Heleket](https://heleket.com).
+- Укажите в панели: `heleket_merchant_id` (Merchant ID) и `heleket_api_key` (API Key).
+- Автоматическая валидация подписи MD5 (`sign = md5(base64(json) + api_key)`).
+- Webhook URL: `https://panel.your-domain.com/webhook/heleket`.
+
 ### CryptoBot & YooKassa
-- **CryptoBot**: укажите API-токен приложения из `@CryptoBot` -> *Crypto Pay*. URL вебхука: `https://panel.your-domain.com/cryptobot-webhook`.
-- **YooKassa**: укажите `yookassa_shop_id` и `yookassa_secret_key`. URL вебхука: `https://panel.your-domain.com/yookassa-webhook`.
+- **CryptoBot**: укажите API-токен приложения из `@CryptoBot` -> *Crypto Pay*. URL вебхука: `https://panel.your-domain.com/webhook/cryptobot`.
+- **YooKassa**: укажите `yookassa_shop_id` и `yookassa_secret_key`. URL вебхука: `https://panel.your-domain.com/webhook/yookassa`.
+
+### YooMoney (ЮMoney кошелёк / Quickpay)
+- Укажите номер кошелька `yoomoney_wallet` (например, `41001XXXXXXXXXX`).
+- Настройте авторизацию через OAuth для автоматической проверки зачислений: укажите `yoomoney_client_id` (и при необходимости `yoomoney_client_secret`) и нажмите **Подключить YooMoney (OAuth)** либо укажите готовый `yoomoney_api_token` вручную.
+- Форма оплаты формируется через сервис ЮMoney Quickpay, а поступление средств проверяется по официальному API истории операций (`operation-history`).
+- Redirect URI для регистрации OAuth-приложения: `https://panel.your-domain.com/yoomoney/callback`.
 
 ---
 

@@ -279,8 +279,8 @@ def initialize_db():
                 "panel_login": "admin",
                 "panel_password": "admin",
                 "about_text": None,
-                "terms_url": None,
-                "privacy_url": None,
+                "terms_url": "https://neo-vpn.click/terms.html",
+                "privacy_url": "https://neo-vpn.click/privacy.html",
                 "support_user": None,
                 "support_text": None,
                 # Editable content
@@ -388,19 +388,17 @@ def initialize_db():
                 "cryptomus_enabled": "false",
                 "cryptomus_merchant_id": None,
                 "cryptomus_api_key": None,
-                # PayOK payments (cards, SBP, P2P)
-                "payok_enabled": "false",
-                "payok_api_id": None,
-                "payok_api_key": None,
-                "payok_shop_id": None,
-                "payok_secret_key": None,
-                "payok_currency": "RUB",
-                # Lava.top payments (cards RF/World, SBP)
-                "lavatop_enabled": "false",
-                "lavatop_api_key": None,
-                "lavatop_offer_id": None,
-                "lavatop_webhook_key": None,
-                "lavatop_currency": "RUB",
+                # AnyPay payments (cards RF, SBP, Pay)
+                "anypay_enabled": "false",
+                "anypay_project_id": None,
+                "anypay_secret_key": None,
+                "anypay_api_key": None,
+                "anypay_currency": "RUB",
+                # Platega.io payments
+                "platega_enabled": "false",
+                "platega_merchant_id": None,
+                "platega_secret": None,
+                "panel_domain": None,
                 # Base currency settings
                 "base_currency": "USD",
                 "max_keys": "50",
@@ -455,6 +453,41 @@ def initialize_db():
                     logging.info("Добавлена колонка xui_client_uuid в таблицу vpn_keys")
             except Exception as e:
                 logging.warning(f"Ошибка при добавлении колонок в таблицу vpn_keys: {e}")
+
+            # Миграция: убедиться в наличии колонок status и is_deleted в user_keys
+            try:
+                cursor.execute("PRAGMA table_info(user_keys)")
+                uk_cols = {row[1] for row in cursor.fetchall()}
+                if 'status' not in uk_cols:
+                    cursor.execute("ALTER TABLE user_keys ADD COLUMN status TEXT DEFAULT 'active'")
+                    logging.info("Добавлена колонка status в таблицу user_keys")
+                if 'is_deleted' not in uk_cols:
+                    cursor.execute("ALTER TABLE user_keys ADD COLUMN is_deleted BOOLEAN DEFAULT 0")
+                    logging.info("Добавлена колонка is_deleted в таблицу user_keys")
+            except Exception as e:
+                logging.warning(f"Ошибка при добавлении колонок в таблицу user_keys: {e}")
+
+            # Миграция: дефолтный URL политики конфиденциальности и пользовательского соглашения
+            try:
+                cursor.execute("UPDATE bot_settings SET value = 'https://neo-vpn.click/privacy.html' WHERE key = 'privacy_url' AND (value IS NULL OR value = '')")
+                cursor.execute("UPDATE bot_settings SET value = 'https://neo-vpn.click/terms.html' WHERE key = 'terms_url' AND (value IS NULL OR value = '')")
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"Ошибка миграции legal URLs: {e}")
+
+            # Миграция: дефолтные ключи AnyPay
+            try:
+                for k, v in [
+                    ("anypay_enabled", "false"),
+                    ("anypay_project_id", ""),
+                    ("anypay_secret_key", ""),
+                    ("anypay_api_key", ""),
+                    ("anypay_currency", "RUB")
+                ]:
+                    cursor.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES (?, ?)", (k, v))
+                conn.commit()
+            except Exception as e:
+                logging.warning(f"Ошибка миграции AnyPay settings: {e}")
 
             # Безопасная авто-миграция: атрибуция и онбординг в таблицу users (docs/SHOPBOT_AI_AND_ATTRIBUTION_SPEC.md)
             try:
@@ -511,7 +544,7 @@ def initialize_db():
                     cursor.execute("ALTER TABLE transactions ADD COLUMN provider TEXT")
                 if 'provider_payment_id' not in tx_cols:
                     cursor.execute("ALTER TABLE transactions ADD COLUMN provider_payment_id TEXT")
-                # v1.4.0: PayOK & Lava.top fields
+                # v1.4.0: Extended transaction fields
                 if 'external_invoice_id' not in tx_cols:
                     cursor.execute("ALTER TABLE transactions ADD COLUMN external_invoice_id TEXT")
                 if 'pay_currency' not in tx_cols:
@@ -1417,10 +1450,11 @@ def delete_key_by_id(key_id: int) -> bool:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM vpn_keys WHERE key_id = ?", (key_id,))
+            cursor.execute("DELETE FROM user_keys WHERE id = ?", (key_id,))
             affected = cursor.rowcount
+            cursor.execute("DELETE FROM vpn_keys WHERE key_id = ?", (key_id,))
             conn.commit()
-            return affected > 0
+            return affected > 0 or cursor.rowcount > 0
     except sqlite3.Error as e:
         logging.error(f"Не удалось удалить ключ по id {key_id}: {e}")
         return False
@@ -1524,7 +1558,7 @@ def find_and_complete_pending_transaction(
                 logger.warning(f"Ожидающая транзакция не найдена для payment_id={payment_id}")
                 return None
 
-            tx_id = transaction['id'] if 'id' in transaction.keys() else None
+            tx_id = transaction['transaction_id'] if 'transaction_id' in transaction.keys() else (transaction['id'] if 'id' in transaction.keys() else None)
             if tx_id:
                 cursor.execute(
                     """
@@ -1534,7 +1568,7 @@ def find_and_complete_pending_transaction(
                         amount_currency = COALESCE(?, amount_currency),
                         currency_name = COALESCE(?, currency_name),
                         payment_method = COALESCE(?, payment_method)
-                    WHERE id = ?
+                    WHERE transaction_id = ?
                     """,
                     (amount_rub, amount_currency, currency_name, payment_method, tx_id)
                 )
@@ -1756,23 +1790,29 @@ def create_gift_key(user_id: int, host_name: str, key_email: str, months: int, x
             )
             conn.commit()
             return cursor.lastrowid
-    except sqlite3.IntegrityОшибка as e:
+    except sqlite3.IntegrityError as e:
         logging.error(f"Не удалось создать подарочный ключ для пользователя {user_id}: дублирующийся email {key_email}: {e}")
         return None
     except sqlite3.Error as e:
         logging.error(f"Не удалось создать подарочный ключ для пользователя {user_id}: {e}")
         return None
 
-def get_setting(key: str) -> str | None:
+def get_setting(key: str, default: Any = None) -> Any:
+    """
+    Возвращает значение настройки по ключу. Если ключ отсутствует или равен None,
+    возвращает default.
+    """
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT value FROM bot_settings WHERE key = ?", (key,))
-            result = cursor.fetchone()
-            return result[0] if result else None
+            row = cursor.fetchone()
+            if row is not None and row[0] is not None:
+                return row[0]
+            return default
     except sqlite3.Error as e:
         logging.error(f"Не удалось получить настройку '{key}': {e}")
-        return None
+        return default
 
 def get_admin_ids() -> set[int]:
     """Возвращает множество ID администраторов из настроек.
@@ -1859,6 +1899,10 @@ def get_all_settings() -> dict:
 
 def update_setting(key: str, value: str):
     try:
+        if isinstance(value, str) and key in ("anypay_project_id", "anypay_secret_key", "anypay_api_key", "anypay_currency"):
+            value = value.strip()
+            if key == "anypay_currency":
+                value = value.upper()
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute("INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)", (key, value))
@@ -2309,17 +2353,25 @@ def get_total_spent_sum() -> float:
     try:
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            # Consider only completed/paid transactions when summing total spent
+            # Consider only completed/paid transactions when summing total spent (computed in USD)
             cursor.execute(
                 """
-                SELECT COALESCE(SUM(amount_rub), 0.0)
+                SELECT COALESCE(SUM(
+                    CASE 
+                        WHEN amount_usd IS NOT NULL AND amount_usd > 0 THEN amount_usd
+                        WHEN UPPER(COALESCE(currency_name, '')) = 'USD' THEN COALESCE(amount_currency, amount_rub)
+                        WHEN UPPER(COALESCE(currency_name, '')) IN ('RUB', 'UAH', 'UZS', 'KGS') AND exchange_rate > 0 THEN amount_rub / exchange_rate
+                        WHEN UPPER(COALESCE(currency_name, '')) = 'RUB' THEN amount_rub / 95.0
+                        ELSE amount_rub
+                    END
+                ), 0.0)
                 FROM transactions
                 WHERE LOWER(COALESCE(status, '')) IN ('paid', 'completed', 'success')
                   AND LOWER(COALESCE(payment_method, '')) <> 'balance'
                 """
             )
             val = cursor.fetchone()
-            return (val[0] if val else 0.0) or 0.0
+            return round((val[0] if val else 0.0) or 0.0, 2)
     except sqlite3.Error as e:
         logging.error(f"Не удалось get total spent sum: {e}")
         return 0.0
@@ -2340,6 +2392,32 @@ def create_pending_transaction(
     exchange_rate_used: float | None = None,
 ) -> int:
     try:
+        # Вычисление amount_usd для ожидающей транзакции
+        if amount_usd is None and amount_rub is not None:
+            curr = (currency_name or pay_currency or "").strip().upper()
+            if curr == "USD":
+                amount_usd = amount_currency if amount_currency is not None else amount_rub
+            else:
+                meta_price = (metadata or {}).get("price") or (metadata or {}).get("price_usd")
+                if meta_price:
+                    try:
+                        p_val = float(meta_price)
+                        if p_val > 0 and (p_val < float(amount_rub) if amount_rub and float(amount_rub) > 10 else True):
+                            amount_usd = round(p_val, 2)
+                    except (ValueError, TypeError):
+                        pass
+                if amount_usd is None and exchange_rate and exchange_rate > 0:
+                    amount_usd = round(float(amount_rub) / float(exchange_rate), 2)
+                if amount_usd is None:
+                    rate = 95.0
+                    try:
+                        r_set = get_setting("usd_rub_rate") or get_setting("exchange_rate_rub")
+                        if r_set:
+                            rate = float(r_set)
+                    except Exception:
+                        pass
+                    amount_usd = round(float(amount_rub) / float(rate), 2)
+
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -2354,7 +2432,7 @@ def create_pending_transaction(
                     json.dumps(metadata),
                     provider,
                     provider_payment_id or payment_id,
-                    amount_usd if amount_usd is not None else amount_rub,
+                    amount_usd,
                     exchange_rate,
                     currency_name,
                     amount_currency,
@@ -2410,24 +2488,147 @@ def log_transaction(
     provider_payment_id: str | None = None,
 ):
     try:
-        # Auto-compute amount_usd if not explicitly supplied
-        if amount_usd is None and amount_rub is not None:
-            if (currency_name or "").upper() == "USD" and amount_currency is not None:
-                amount_usd = amount_currency
-            elif exchange_rate and exchange_rate > 0 and amount_currency:
-                amount_usd = round(amount_currency / exchange_rate, 2)
+        parsed_metadata = {}
+        if metadata:
+            try:
+                parsed_metadata = json.loads(metadata) if isinstance(metadata, str) else dict(metadata)
+            except Exception:
+                parsed_metadata = {}
+
+        curr = (currency_name or "").strip().upper()
+        if not curr and parsed_metadata:
+            curr = str(parsed_metadata.get("currency") or parsed_metadata.get("pay_currency") or "").strip().upper()
+
+        # 1. Расчёт amount_usd
+        if amount_usd is None or amount_usd <= 0:
+            if curr == "USD":
+                amount_usd = amount_currency if amount_currency is not None else amount_rub
+            elif curr in ("RUB", "UAH", "UZS", "KGS") or not curr:
+                # Попытка 1: получить исходную цену тарифа в USD из metadata
+                meta_price = parsed_metadata.get("price") or parsed_metadata.get("price_usd") or parsed_metadata.get("amount_usd")
+                if meta_price is not None:
+                    try:
+                        p_val = float(meta_price)
+                        if p_val > 0 and (p_val < float(amount_rub) if amount_rub and float(amount_rub) > 10 else True):
+                            amount_usd = round(p_val, 2)
+                    except (ValueError, TypeError):
+                        pass
+
+                # Попытка 2: получить цену тарифа из БД по plan_id
+                if amount_usd is None:
+                    plan_id = parsed_metadata.get("plan_id")
+                    if plan_id:
+                        try:
+                            plan = get_plan_by_id(plan_id)
+                            if plan and plan.get("price"):
+                                amount_usd = round(float(plan["price"]), 2)
+                        except Exception:
+                            pass
+
+                # Попытка 3: конвертация через курс
+                if amount_usd is None and amount_rub is not None and float(amount_rub) > 0:
+                    rate = exchange_rate
+                    if not rate or rate <= 0:
+                        try:
+                            rate_setting = get_setting("usd_rub_rate") or get_setting("exchange_rate_rub") or get_setting("cbr_rate_usd_rub")
+                            if rate_setting:
+                                rate = float(rate_setting)
+                        except Exception:
+                            rate = None
+                    if not rate or rate <= 0:
+                        rate = 95.0
+                    amount_usd = round(float(amount_rub) / float(rate), 2)
             else:
-                amount_usd = amount_rub
+                if exchange_rate and exchange_rate > 0 and amount_currency:
+                    amount_usd = round(float(amount_currency) / float(exchange_rate), 2)
+                elif amount_currency is not None:
+                    amount_usd = float(amount_currency)
+                else:
+                    amount_usd = float(amount_rub)
+
+        # Ни при каких условиях amount_usd не должен быть равен amount_rub для рублей
+        if curr in ("RUB", "UAH", "UZS", "KGS") and amount_rub and float(amount_rub) > 10 and amount_usd == amount_rub:
+            rate = exchange_rate or 95.0
+            amount_usd = round(float(amount_rub) / float(rate), 2)
+
+        metadata_str = json.dumps(parsed_metadata) if isinstance(metadata, dict) else (metadata or "")
 
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """INSERT INTO transactions
-                   (username, transaction_id, payment_id, user_id, status, amount_rub, amount_currency, currency_name, payment_method, metadata, created_date, exchange_rate, amount_usd, provider, provider_payment_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (username, transaction_id, payment_id, user_id, status, amount_rub, amount_currency, currency_name, payment_method, metadata, datetime.now(), exchange_rate, amount_usd, provider, provider_payment_id)
-            )
-            conn.commit()
+            existing = None
+            if payment_id and str(payment_id).strip():
+                cursor.execute(
+                    "SELECT transaction_id, amount_usd, amount_rub, status FROM transactions WHERE payment_id = ?",
+                    (str(payment_id).strip(),)
+                )
+                existing = cursor.fetchone()
+
+            if existing:
+                # БЛОК 2: Запись уже существует (выставлен счет / pending).
+                # Выполняем UPDATE, чтобы избежать ошибки "UNIQUE constraint failed: transactions.payment_id"
+                existing_tx_id, old_amount_usd, existing_rub, old_status = existing
+                final_usd = amount_usd if (amount_usd is not None and amount_usd > 0) else old_amount_usd
+
+                final_rub = amount_rub
+                if existing_rub and existing_rub > 10 and amount_rub and amount_rub < 10:
+                    final_rub = existing_rub
+
+                cursor.execute(
+                    """UPDATE transactions
+                       SET username = COALESCE(?, username),
+                           user_id = COALESCE(?, user_id),
+                           status = COALESCE(?, status),
+                           amount_rub = COALESCE(?, amount_rub),
+                           amount_currency = COALESCE(?, amount_currency),
+                           currency_name = COALESCE(?, currency_name),
+                           payment_method = COALESCE(?, payment_method),
+                           metadata = CASE WHEN ? != '' AND ? != '{}' THEN ? ELSE metadata END,
+                           exchange_rate = COALESCE(?, exchange_rate),
+                           amount_usd = COALESCE(?, amount_usd),
+                           provider = COALESCE(?, provider),
+                           provider_payment_id = COALESCE(?, provider_payment_id)
+                       WHERE payment_id = ?""",
+                    (
+                        username or None,
+                        user_id or None,
+                        status or None,
+                        final_rub,
+                        amount_currency,
+                        currency_name or None,
+                        payment_method or None,
+                        metadata_str, metadata_str, metadata_str,
+                        exchange_rate,
+                        final_usd,
+                        provider or None,
+                        provider_payment_id or None,
+                        str(payment_id).strip()
+                    )
+                )
+                conn.commit()
+            else:
+                cursor.execute(
+                    """INSERT INTO transactions
+                       (username, transaction_id, payment_id, user_id, status, amount_rub, amount_currency, currency_name, payment_method, metadata, created_date, exchange_rate, amount_usd, provider, provider_payment_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        username,
+                        transaction_id,
+                        payment_id,
+                        user_id,
+                        status,
+                        amount_rub,
+                        amount_currency,
+                        currency_name,
+                        payment_method,
+                        metadata_str,
+                        datetime.now(),
+                        exchange_rate,
+                        amount_usd,
+                        provider,
+                        provider_payment_id
+                    )
+                )
+                conn.commit()
     except sqlite3.Error as e:
         logging.error(f"Не удалось log transaction for user {user_id}: {e}")
 
@@ -2548,15 +2749,52 @@ def get_paginated_transactions(page: int = 1, per_page: int = 15) -> tuple[list[
                 metadata_str = transaction_dict.get('metadata')
                 if metadata_str:
                     try:
-                        metadata = json.loads(metadata_str)
-                        transaction_dict['host_name'] = metadata.get('host_name', 'N/A')
-                        transaction_dict['plan_name'] = metadata.get('plan_name', 'N/A')
-                    except json.JSONDecodeОшибка:
-                        transaction_dict['host_name'] = 'Ошибка'
-                        transaction_dict['plan_name'] = 'Ошибка'
+                        metadata = json.loads(metadata_str) if isinstance(metadata_str, str) else dict(metadata_str)
+                        h_name = metadata.get('host_name')
+                        p_name = metadata.get('plan_name')
+                        if (not h_name or not p_name) and metadata.get('plan_id'):
+                            try:
+                                p_obj = get_plan_by_id(metadata.get('plan_id'))
+                                if p_obj:
+                                    h_name = h_name or p_obj.get('host_name')
+                                    p_name = p_name or p_obj.get('plan_name') or f"{p_obj.get('months', 1)} мес."
+                            except Exception:
+                                pass
+                        if not p_name and metadata.get('months'):
+                            p_name = f"{metadata.get('months')} мес."
+                        if not h_name:
+                            try:
+                                u_keys = get_user_keys(transaction_dict.get('user_id'))
+                                if u_keys:
+                                    h_name = u_keys[0].get('host_name')
+                            except Exception:
+                                pass
+                        if not h_name or not p_name:
+                            try:
+                                amt = float(transaction_dict.get('amount_usd') or transaction_dict.get('amount_rub') or 0.0)
+                                for p in get_plans():
+                                    if abs(float(p.get('price', 0)) - amt) < 0.1:
+                                        h_name = h_name or p.get('host_name')
+                                        p_name = p_name or p.get('plan_name') or f"{p.get('months', 1)} мес."
+                                        break
+                            except Exception:
+                                pass
+                        transaction_dict['host_name'] = h_name or 'N/A'
+                        transaction_dict['plan_name'] = p_name or 'N/A'
+                    except Exception:
+                        transaction_dict['host_name'] = 'N/A'
+                        transaction_dict['plan_name'] = 'N/A'
                 else:
-                    transaction_dict['host_name'] = 'N/A'
-                    transaction_dict['plan_name'] = 'N/A'
+                    h_name = None
+                    p_name = None
+                    try:
+                        u_keys = get_user_keys(transaction_dict.get('user_id'))
+                        if u_keys:
+                            h_name = u_keys[0].get('host_name')
+                    except Exception:
+                        pass
+                    transaction_dict['host_name'] = h_name or 'N/A'
+                    transaction_dict['plan_name'] = p_name or 'N/A'
                 
                 transactions.append(transaction_dict)
             
@@ -2626,22 +2864,52 @@ def add_new_key(
         import secrets
         final_sub_id = (sub_id or secrets.token_hex(16)).strip()
         final_key_name = key_name or "Ключ"
+
+        # Разрешаем актуальный host_id по имени хоста, если передан дефолтный 1
+        if host_name:
+            try:
+                h_obj = get_host(host_name)
+                if h_obj and h_obj.get('host_id'):
+                    host_id = int(h_obj['host_id'])
+            except Exception:
+                pass
+
+        new_key_id = None
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            expiry_date = datetime.fromtimestamp(expiry_timestamp_ms / 1000) if expiry_timestamp_ms else datetime.now()
-            # 1. Insert into user_keys (v1.3.0 multi-key primary)
-            cursor.execute("""
-                INSERT INTO user_keys (
-                    user_id, host_id, host_name, key_name,
-                    client_uuid, email, sub_id, expiry_time, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
-            """, (
-                user_id, host_id, host_name, final_key_name,
-                xui_client_uuid, key_email, final_sub_id, int(expiry_timestamp_ms or 0)
-            ))
-            new_key_id = cursor.lastrowid
 
-            # 2. Maintain vpn_keys table sync for backwards compatibility
+            # Гарантируем наличие пользователя в users для соблюдения FK
+            try:
+                cursor.execute("SELECT telegram_id FROM users WHERE telegram_id = ?", (user_id,))
+                if not cursor.fetchone():
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO users (telegram_id, username, total_spent, total_months) VALUES (?, ?, 0.0, 0)",
+                        (user_id, f"user{user_id}")
+                    )
+                    conn.commit()
+            except Exception as e_user:
+                logging.warning(f"add_new_key: проверка/создание пользователя {user_id}: {e_user}")
+
+            expiry_date = datetime.fromtimestamp(expiry_timestamp_ms / 1000) if expiry_timestamp_ms else datetime.now()
+
+            # 1. Вставка в user_keys
+            try:
+                cursor.execute("""
+                    INSERT INTO user_keys (
+                        user_id, host_id, host_name, key_name,
+                        client_uuid, email, sub_id, expiry_time, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                """, (
+                    user_id, host_id, host_name, final_key_name,
+                    xui_client_uuid, key_email, final_sub_id, int(expiry_timestamp_ms or 0)
+                ))
+                new_key_id = cursor.lastrowid
+                conn.commit()
+                logging.info(f"Ключ успешно зафиксирован в user_keys: id={new_key_id}, user_id={user_id}, email={key_email}")
+            except Exception as e_uk:
+                logging.error(f"Не удалось добавить ключ в user_keys для user {user_id} ({key_email}): {e_uk}", exc_info=True)
+
+            # 2. Синхронизация с vpn_keys
             try:
                 cursor.execute("""
                     INSERT OR REPLACE INTO vpn_keys (
@@ -2650,13 +2918,14 @@ def add_new_key(
                 """, (
                     new_key_id, user_id, host_name, xui_client_uuid, key_email, expiry_date, final_key_name
                 ))
+                conn.commit()
+                logging.info(f"Синхронизация vpn_keys выполнена для key_id={new_key_id}, email={key_email}")
             except Exception as e_vpn:
-                logger.debug(f"vpn_keys sync notice: {e_vpn}")
+                logging.error(f"Не удалось синхронизировать vpn_keys для key_id={new_key_id}: {e_vpn}", exc_info=True)
 
-            conn.commit()
             return new_key_id
     except sqlite3.Error as e:
-        logging.error(f"Не удалось add new key for user {user_id}: {e}")
+        logging.error(f"Критическая ошибка add_new_key для user {user_id}: {e}", exc_info=True)
         return None
 
 def delete_key_by_email(email: str) -> bool:
@@ -2797,7 +3066,10 @@ def get_keys_for_host(host_name: str) -> list[dict]:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM user_keys WHERE TRIM(host_name) = TRIM(?)", (host_name,))
+            cursor.execute(
+                "SELECT * FROM user_keys WHERE TRIM(host_name) = TRIM(?) AND (status IS NULL OR status != 'deleted') AND (is_deleted IS NULL OR is_deleted = 0)",
+                (host_name,)
+            )
             rows = cursor.fetchall()
             if not rows:
                 cursor.execute("SELECT * FROM vpn_keys WHERE TRIM(host_name) = TRIM(?)", (host_name,))
@@ -2830,10 +3102,29 @@ def update_key_status_from_server(key_email: str, xui_client_data):
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
             if xui_client_data:
-                expiry_date = datetime.fromtimestamp(xui_client_data.expiry_time / 1000)
-                cursor.execute("UPDATE vpn_keys SET xui_client_uuid = ?, expiry_date = ? WHERE key_email = ?", (xui_client_data.id, expiry_date, key_email))
+                cid = None
+                exp_ms = 0
+                if isinstance(xui_client_data, dict):
+                    cid = xui_client_data.get('uuid') or xui_client_data.get('id')
+                    exp_ms = int(xui_client_data.get('expiryTime') or xui_client_data.get('expiry_time') or 0)
+                else:
+                    cid = getattr(xui_client_data, 'id', None)
+                    exp_ms = int(getattr(xui_client_data, 'expiry_time', 0) or 0)
+
+                if exp_ms > 0:
+                    expiry_date = datetime.fromtimestamp(exp_ms / 1000)
+                else:
+                    expiry_date = datetime.now()
+
+                if cid:
+                    cursor.execute("UPDATE vpn_keys SET xui_client_uuid = ?, expiry_date = ? WHERE key_email = ?", (str(cid), expiry_date, key_email))
+                    cursor.execute("UPDATE user_keys SET client_uuid = ?, expiry_time = ?, status = 'active' WHERE email = ?", (str(cid), exp_ms, key_email))
+                else:
+                    cursor.execute("UPDATE vpn_keys SET expiry_date = ? WHERE key_email = ?", (expiry_date, key_email))
+                    cursor.execute("UPDATE user_keys SET expiry_time = ?, status = 'active' WHERE email = ?", (exp_ms, key_email))
             else:
-                cursor.execute("DELETE FROM vpn_keys WHERE key_email = ?", (key_email,))
+                # Do NOT hard delete active records - only update status
+                cursor.execute("UPDATE user_keys SET status = 'expired' WHERE email = ?", (key_email,))
             conn.commit()
     except sqlite3.Error as e:
         logging.error(f"Не удалось update key status for {key_email}: {e}")
@@ -2888,6 +3179,7 @@ def get_recent_transactions(limit: int = 15) -> list[dict]:
                 LIMIT ?;
             """
             cursor.execute(query, (limit,))
+            transactions = [dict(r) for r in cursor.fetchall()]
     except sqlite3.Error as e:
         logging.error(f"Не удалось get recent transactions: {e}")
     return transactions

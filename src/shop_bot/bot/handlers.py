@@ -34,7 +34,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import html as py_html
 
 from shop_bot.bot import keyboards
-from shop_bot.modules import xui_api, aaio_payment, cryptomus_payment, payok_payment, lavatop_payment
+from shop_bot.modules import xui_api, aaio_payment, cryptomus_payment, anypay_payment, platega_payment
 from shop_bot.services import ai_onboarding
 from shop_bot.data_manager.database import (
     get_user, add_new_key, get_user_keys, update_user_stats,
@@ -79,8 +79,78 @@ from shop_bot.config import (
     get_purchase_success_text,
 )
 
+def get_current_payment_methods() -> dict:
+    from shop_bot.data_manager.database import get_setting
+    from shop_bot.modules.anypay_payment import is_anypay_enabled
+    from shop_bot.modules.platega_payment import is_platega_enabled
+
+    yookassa_shop_id = get_setting("yookassa_shop_id")
+    yookassa_secret_key = get_setting("yookassa_secret_key")
+    yookassa_enabled = bool(yookassa_shop_id and yookassa_secret_key)
+
+    aaio_flag = get_setting("aaio_enabled")
+    aaio_merchant = get_setting("aaio_merchant_id")
+    aaio_secret = get_setting("aaio_secret_1")
+    aaio_api = get_setting("aaio_api_key")
+    aaio_enabled = (str(aaio_flag).lower() in ("true", "1", "yes", "on")) and bool(aaio_merchant and aaio_secret and aaio_api)
+
+    cryptomus_flag = get_setting("cryptomus_enabled")
+    cryptomus_merchant = get_setting("cryptomus_merchant_id")
+    cryptomus_key = get_setting("cryptomus_api_key")
+    cryptomus_enabled = (str(cryptomus_flag).lower() in ("true", "1", "yes", "on")) and bool(cryptomus_merchant and cryptomus_key)
+
+    tonconnect_flag = get_setting("tonconnect_enabled")
+    if tonconnect_flag is not None:
+        tonconnect_enabled = str(tonconnect_flag).lower() in ("true", "1", "yes")
+    else:
+        tonconnect_enabled = bool(get_setting("ton_wallet_address") and get_setting("tonapi_key"))
+
+    return {
+        "yookassa": yookassa_enabled,
+        "heleket": bool(get_setting("heleket_merchant_id") and get_setting("heleket_api_key")),
+        "cryptobot": bool(get_setting("cryptobot_token")),
+        "tonconnect": tonconnect_enabled,
+        "stars": str(get_setting("stars_enabled", "false")).lower() in ("true", "1", "yes"),
+        "yoomoney": str(get_setting("yoomoney_enabled", "false")).lower() in ("true", "1", "yes"),
+        "aaio": aaio_enabled,
+        "cryptomus": cryptomus_enabled,
+        "anypay": is_anypay_enabled(),
+        "platega": is_platega_enabled(),
+    }
+
+
+class _DynamicPaymentMethods(dict):
+    """Динамический словарь для обратной совместимости с обращением к handlers.PAYMENT_METHODS"""
+    def __getitem__(self, key):
+        return get_current_payment_methods().get(key, False)
+
+    def get(self, key, default=None):
+        return get_current_payment_methods().get(key, default)
+
+    def items(self):
+        return get_current_payment_methods().items()
+
+    def values(self):
+        return get_current_payment_methods().values()
+
+    def keys(self):
+        return get_current_payment_methods().keys()
+
+    def __iter__(self):
+        return iter(get_current_payment_methods())
+
+    def __len__(self):
+        return len(get_current_payment_methods())
+
+    def __bool__(self):
+        return any(get_current_payment_methods().values())
+
+    def __contains__(self, key):
+        return key in get_current_payment_methods()
+
+
 TELEGRAM_BOT_USERNAME = get_setting("telegram_bot_username")
-PAYMENT_METHODS: dict = {}
+PAYMENT_METHODS: dict = _DynamicPaymentMethods()
 ADMIN_ID = int(get_setting("admin_id")) if get_setting("admin_id") else None
 CRYPTO_BOT_TOKEN = get_setting("cryptobot_token")
 
@@ -438,19 +508,21 @@ def get_user_router() -> Router:
         await callback.answer()
         await show_main_menu(callback.message, edit_message=True)
 
-    @user_router.callback_query(F.data == "show_profile")
-    @registration_required
-    async def profile_handler_callback(callback: types.CallbackQuery):
-        await callback.answer()
-        user_id = callback.from_user.id
+    async def _render_user_profile(user_id: int, from_user: Optional[types.User] = None) -> Optional[tuple[str, types.InlineKeyboardMarkup]]:
         user_db_data = get_user(user_id)
-        user_keys = get_user_keys(user_id)
         if not user_db_data:
-            await callback.answer("Не удалось получить данные профиля.", show_alert=True)
-            return
+            return None
+        user_keys = get_user_keys(user_id)
         preferred_curr = get_user_preferred_currency(user_id)
-        username = html.bold(user_db_data.get('username', 'Пользователь'))
-        total_spent, total_months = user_db_data.get('total_spent', 0), user_db_data.get('total_months', 0)
+
+        raw_username = user_db_data.get('username')
+        if not raw_username and from_user:
+            raw_username = from_user.username or from_user.full_name
+        if not raw_username:
+            raw_username = "Пользователь"
+
+        total_spent = user_db_data.get('total_spent', 0)
+        total_months = user_db_data.get('total_months', 0)
         now = datetime.now()
         active_keys = [key for key in user_keys if datetime.fromisoformat(key['expiry_date']) > now]
         if active_keys:
@@ -458,9 +530,12 @@ def get_user_router() -> Router:
             latest_expiry_date = datetime.fromisoformat(latest_key['expiry_date'])
             time_left = latest_expiry_date - now
             vpn_status_text = get_vpn_active_text(time_left.days, time_left.seconds // 3600)
-        elif user_keys: vpn_status_text = VPN_INACTIVE_TEXT
-        else: vpn_status_text = VPN_NO_DATA_TEXT
-        final_text = get_profile_text(username, total_spent, total_months, vpn_status_text)
+        elif user_keys:
+            vpn_status_text = VPN_INACTIVE_TEXT
+        else:
+            vpn_status_text = VPN_NO_DATA_TEXT
+
+        final_text = get_profile_text(raw_username, total_spent, total_months, vpn_status_text, user_id=user_id)
         # Баланс: основной + реферальные метрики в валюте пользователя
         try:
             main_balance = get_balance(user_id)
@@ -482,7 +557,41 @@ def get_user_router() -> Router:
             f"\n🤝 <b>Рефералы:</b> {referral_count}"
             f"\n💰 <b>Заработано по рефералке (всего):</b> {formatted_ref}"
         )
-        await callback.message.edit_text(final_text, reply_markup=keyboards.create_profile_keyboard(preferred_currency=preferred_curr))
+        kb = keyboards.create_profile_keyboard(preferred_currency=preferred_curr)
+        return final_text, kb
+
+    @user_router.callback_query(F.data.in_({"show_profile", "user_profile", "profile", "back_to_profile"}))
+    @registration_required
+    async def profile_handler_callback(callback: types.CallbackQuery):
+        await callback.answer()
+        user_id = callback.from_user.id
+        data = await _render_user_profile(user_id, callback.from_user)
+        if not data:
+            await callback.answer("Не удалось получить данные профиля.", show_alert=True)
+            return
+        final_text, kb = data
+        try:
+            await callback.message.edit_text(final_text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest as e:
+            err_str = str(e).lower()
+            if "message is not modified" in err_str:
+                pass
+            elif "there is no text in the message to edit" in err_str or "message can't be edited" in err_str:
+                await callback.message.answer(final_text, reply_markup=kb, parse_mode="HTML")
+            else:
+                raise
+
+    @user_router.message(Command("profile"))
+    @user_router.message(F.text.in_({"👤 Мой профиль", "👤 Профиль", "Профиль"}))
+    @registration_required
+    async def profile_command_handler(message: types.Message):
+        user_id = message.from_user.id
+        data = await _render_user_profile(user_id, message.from_user)
+        if not data:
+            await message.answer("Не удалось получить данные профиля.")
+            return
+        final_text, kb = data
+        await message.answer(final_text, reply_markup=kb, parse_mode="HTML")
 
     @user_router.callback_query(F.data.startswith("set_currency_"))
     @registration_required
@@ -509,7 +618,7 @@ def get_user_router() -> Router:
             await callback.answer("Не удалось получить данные профиля.", show_alert=True)
             return
             
-        username = html.bold(user_db_data.get('username', 'Пользователь'))
+        raw_username = user_db_data.get('username') or callback.from_user.username or callback.from_user.full_name or "Пользователь"
         total_spent = user_db_data.get('total_spent', 0)
         total_months = user_db_data.get('total_months', 0)
         
@@ -526,7 +635,7 @@ def get_user_router() -> Router:
         else:
             vpn_status_text = VPN_NO_DATA_TEXT
             
-        final_text = get_profile_text(username, total_spent, total_months, vpn_status_text)
+        final_text = get_profile_text(raw_username, total_spent, total_months, vpn_status_text, user_id=user_id)
         formatted_spent = currency_service.format_price(total_spent, preferred_curr)
         
         # Добавляем дополнительную информацию
@@ -538,7 +647,7 @@ def get_user_router() -> Router:
         
         builder = InlineKeyboardBuilder()
         builder.button(text="⬅️ Назад", callback_data="show_profile")
-        await callback.message.edit_text(final_text, reply_markup=builder.as_markup())
+        await callback.message.edit_text(final_text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
     @user_router.callback_query(F.data == "profile_balance")
     @registration_required
@@ -582,7 +691,7 @@ def get_user_router() -> Router:
         builder.button(text="💳 Пополнить", callback_data="top_up_start")
         builder.button(text="⬅️ Назад", callback_data="show_profile")
         builder.adjust(1)
-        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+        await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
     @user_router.callback_query(F.data == "main_menu")
     @registration_required
@@ -620,7 +729,7 @@ def get_user_router() -> Router:
         await state.update_data(topup_amount=float(final_amount))
         await message.answer(
             f"К пополнению: ${final_amount:.2f} USD\nВыберите способ оплаты:",
-            reply_markup=keyboards.create_topup_payment_method_keyboard(PAYMENT_METHODS)
+            reply_markup=keyboards.create_topup_payment_method_keyboard(get_current_payment_methods())
         )
         await state.set_state(TopUpProcess.waiting_for_topup_method)
 
@@ -956,9 +1065,9 @@ def get_user_router() -> Router:
             await callback.message.edit_text("❌ Не удалось создать счёт Cryptomus. Проверьте настройки шлюза.")
             await state.clear()
 
-    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_payok")
-    async def topup_pay_payok_handler(callback: types.CallbackQuery, state: FSMContext):
-        await callback.answer("Создаю счёт PayOK...")
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data.startswith("topup:anypay") | (F.data == "topup_pay_anypay"))
+    async def topup_pay_anypay_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт AnyPay...")
         data = await state.get_data()
         user_id = callback.from_user.id
         amount = float(data.get('topup_amount', 0))
@@ -967,61 +1076,71 @@ def get_user_router() -> Router:
             await state.clear()
             return
 
-        order_id = str(uuid.uuid4())
-        user_currency = get_user_preferred_currency(user_id)
+        import time
+        order_id = str(int(time.time() * 1000))[-9:]
         amount_usd = float(amount)
-        cfg_curr = (get_setting("payok_currency") or "RUB").upper().strip()
-        payok_currency = user_currency if user_currency in ["RUB", "USD"] else cfg_curr
+        amount_rub, rate = currency_service.convert_from_usd(amount_usd, "RUB")
+        amount_rub = round(float(amount_rub), 2)
+        if amount_rub < 50.0:
+            amount_rub = 50.0
+        rate = float(rate)
 
         metadata = {
             "payment_id": order_id,
             "user_id": user_id,
             "price": amount_usd,
             "action": "top_up",
-            "payment_method": "PayOK",
+            "payment_method": "AnyPay",
         }
 
-        pay_url, converted_amount, rate = payok_payment.create_payok_payment_url(
+        payment_result = await anypay_payment.create_anypay_payment(
             order_id=order_id,
-            amount_usd=amount_usd,
-            target_currency=payok_currency,
+            amount_rub=amount_rub,
             description=f"Пополнение баланса #{user_id}",
-            email=f"user_{user_id}@shop.local"
+            currency="RUB"
         )
-        if pay_url:
+        if isinstance(payment_result, tuple):
+            pay_url = payment_result[1] if len(payment_result) > 1 and payment_result[0] else None
+        else:
+            pay_url = payment_result
+
+        if pay_url and isinstance(pay_url, str) and pay_url.startswith("http"):
+            pay_url = str(pay_url).strip()
+            logger.info(f"[AnyPay Debug] topup payment_url: {pay_url}")
             create_pending_transaction(
                 payment_id=order_id,
                 user_id=user_id,
-                amount_rub=float(currency_service.convert_from_usd(amount_usd, "RUB")),
+                amount_rub=amount_rub,
                 metadata=metadata,
-                provider="payok",
+                provider="anypay",
                 provider_payment_id=order_id,
                 amount_usd=amount_usd,
                 exchange_rate=rate,
-                currency_name=payok_currency,
-                amount_currency=converted_amount,
-                pay_currency=payok_currency,
+                currency_name="RUB",
+                amount_currency=amount_rub,
+                external_invoice_id=order_id,
+                pay_currency="RUB",
                 exchange_rate_used=rate
             )
             await callback.message.edit_text(
-                f"Счёт на пополнение через PayOK сформирован:\n"
-                f"Сумма: <b>{converted_amount:.2f} {payok_currency}</b> (~${amount_usd:.2f} USD)\n\n"
-                f"Нажмите на кнопку ниже для перехода к оплате:",
+                f"Счёт на пополнение через AnyPay сформирован:\n"
+                f"Сумма: <b>{amount_rub:.2f} RUB</b> (~${amount_usd:.2f} USD)\n\n"
+                f"Нажмите на кнопку ниже для перехода к оплате банковской картой или СБП:",
                 reply_markup=keyboards.create_invoice_payment_keyboard(
                     payment_url=pay_url,
-                    check_callback=f"check_payment_payok_{order_id}",
+                    check_callback=f"check_payment_anypay_{order_id}",
                     cancel_callback="cancel_payment"
                 ),
                 parse_mode="HTML"
             )
             await state.clear()
         else:
-            await callback.message.edit_text("❌ Не удалось создать счёт PayOK. Проверьте настройки шлюза.")
+            await callback.message.edit_text("❌ Не удалось создать счёт AnyPay. Проверьте настройки шлюза.")
             await state.clear()
 
-    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_lavatop")
-    async def topup_pay_lavatop_handler(callback: types.CallbackQuery, state: FSMContext):
-        await callback.answer("Создаю счёт Lava.top...")
+    @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data.startswith("topup:platega") | (F.data == "topup_pay_platega"))
+    async def topup_pay_platega_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт Platega.io...")
         data = await state.get_data()
         user_id = callback.from_user.id
         amount = float(data.get('topup_amount', 0))
@@ -1031,59 +1150,54 @@ def get_user_router() -> Router:
             return
 
         order_id = str(uuid.uuid4())
-        user_currency = get_user_preferred_currency(user_id)
         amount_usd = float(amount)
-        cfg_curr = (get_setting("lavatop_currency") or "RUB").upper().strip()
-        lavatop_currency = user_currency if user_currency in ["RUB", "USD"] else cfg_curr
+        amount_rub, rate = currency_service.convert_from_usd(amount_usd, "RUB")
+        amount_rub = round(float(amount_rub), 2)
+        rate = float(rate)
 
         metadata = {
             "payment_id": order_id,
             "user_id": user_id,
             "price": amount_usd,
             "action": "top_up",
-            "payment_method": "Lava.top",
+            "payment_method": "Platega",
         }
 
-        pay_url, invoice_id, converted_amount, rate = await asyncio.to_thread(
-            lavatop_payment.create_lavatop_invoice,
+        ok, pay_url, tx_id = await platega_payment.create_platega_payment(
             order_id=order_id,
-            amount_usd=amount_usd,
-            telegram_id=user_id,
-            tariff_id=0,
-            keys_count=1,
-            target_currency=lavatop_currency,
-            email=f"user_{user_id}@shop.local"
+            amount_rub=amount_rub,
+            description=f"Пополнение баланса #{user_id}"
         )
-        if pay_url:
+        if ok and pay_url:
             create_pending_transaction(
                 payment_id=order_id,
                 user_id=user_id,
-                amount_rub=float(currency_service.convert_from_usd(amount_usd, "RUB")),
+                amount_rub=amount_rub,
                 metadata=metadata,
-                provider="lavatop",
-                provider_payment_id=invoice_id or order_id,
+                provider="platega",
+                provider_payment_id=tx_id or order_id,
                 amount_usd=amount_usd,
                 exchange_rate=rate,
-                currency_name=lavatop_currency,
-                amount_currency=converted_amount,
-                external_invoice_id=invoice_id,
-                pay_currency=lavatop_currency,
+                currency_name="RUB",
+                amount_currency=amount_rub,
+                external_invoice_id=tx_id,
+                pay_currency="RUB",
                 exchange_rate_used=rate
             )
             await callback.message.edit_text(
-                f"Счёт на пополнение через Lava.top сформирован:\n"
-                f"Сумма: <b>{converted_amount:.2f} {lavatop_currency}</b> (~${amount_usd:.2f} USD)\n\n"
+                f"Счёт на пополнение через Platega сформирован:\n"
+                f"Сумма: <b>{amount_rub:.2f} RUB</b> (~${amount_usd:.2f} USD)\n\n"
                 f"Нажмите на кнопку ниже для перехода к оплате банковской картой или СБП:",
                 reply_markup=keyboards.create_invoice_payment_keyboard(
                     payment_url=pay_url,
-                    check_callback=f"check_lava_{order_id}",
+                    check_callback=f"check_payment_platega_{order_id}",
                     cancel_callback="cancel_payment"
                 ),
                 parse_mode="HTML"
             )
             await state.clear()
         else:
-            await callback.message.edit_text("❌ Не удалось создать счёт Lava.top. Проверьте настройки шлюза.")
+            await callback.message.edit_text("❌ Не удалось создать счёт Platega.io. Проверьте настройки шлюза.")
             await state.clear()
 
     @user_router.callback_query(TopUpProcess.waiting_for_topup_method, F.data == "topup_pay_tonconnect")
@@ -2410,7 +2524,7 @@ def get_user_router() -> Router:
         show_balance_btn = main_balance >= float(final_price)
 
         keyboard = keyboards.create_payment_method_keyboard(
-            payment_methods=PAYMENT_METHODS,
+            payment_methods=get_current_payment_methods(),
             action=data.get('action'),
             key_id=data.get('key_id'),
             show_balance=show_balance_btn,
@@ -2489,6 +2603,41 @@ def get_user_router() -> Router:
         await state.set_data(data)
         await callback.message.answer("Промокод удалён.")
         await show_payment_options(callback.message, state)
+
+    def _build_order_metadata(
+        user_id: int,
+        order_id: str,
+        plan: dict,
+        data: dict,
+        payment_method: str,
+        final_price_usd: float
+    ) -> dict:
+        host_name = data.get('host_name') or plan.get('host_name') or ''
+        host_id = data.get('host_id') or plan.get('host_id') or 1
+        plan_id = plan.get('plan_id') or data.get('plan_id')
+        plan_name = plan.get('plan_name') or f"{plan.get('months', 1)} мес."
+        action = data.get('action') or ('extend' if data.get('key_id') else 'new')
+        months = int(plan.get('months') or data.get('months') or 1)
+        customer_email = data.get('customer_email') or get_setting("receipt_email") or f"user_{user_id}@shop.local"
+
+        return {
+            "payment_id": str(order_id),
+            "user_id": int(user_id),
+            "action": str(action),
+            "host_name": str(host_name),
+            "host_id": int(host_id) if host_id else 1,
+            "plan_id": int(plan_id) if plan_id else None,
+            "plan_name": str(plan_name),
+            "months": months,
+            "price": float(final_price_usd),
+            "quantity": int(data.get('quantity', 1)),
+            "key_id": data.get('key_id'),
+            "customer_email": str(customer_email),
+            "payment_method": str(payment_method),
+            "promo_code": data.get('promo_code'),
+            "promo_discount_percent": data.get('promo_discount_percent'),
+            "promo_discount_amount": data.get('promo_discount_amount'),
+        }
 
     @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_yookassa")
     async def create_yookassa_payment_handler(callback: types.CallbackQuery, state: FSMContext):
@@ -2640,21 +2789,14 @@ def get_user_router() -> Router:
         months = int(plan['months'])
         user_id = callback.from_user.id
         payment_id = str(uuid.uuid4())
-        metadata = {
-            "payment_id": payment_id,
-            "user_id": user_id,
-            "months": months,
-            "price": final_price_usd,
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": data.get('customer_email'),
-            "payment_method": "YooMoney",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
+        metadata = _build_order_metadata(
+            user_id=user_id,
+            order_id=payment_id,
+            plan=plan,
+            data=data,
+            payment_method="YooMoney",
+            final_price_usd=final_price_usd
+        )
         # Сохраняем pending транзакцию в БД
         try:
             create_pending_transaction(payment_id, user_id, amount_rub, metadata, amount_usd=final_price_usd, currency_name="RUB", amount_currency=amount_rub)
@@ -2711,23 +2853,16 @@ def get_user_router() -> Router:
         stars_count = _calc_stars_amount(price_decimal)
         # Для Stars ограничим payload до UUID, метаданные сохраним в pending‑транзакцию
         payment_id = str(uuid.uuid4())
-        metadata = {
-            "user_id": callback.from_user.id,
-            "months": months,
-            "price": float(price_decimal),
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": data.get('customer_email'),
-            "payment_method": "Stars",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
+        metadata = _build_order_metadata(
+            user_id=callback.from_user.id,
+            order_id=payment_id,
+            plan=plan,
+            data=data,
+            payment_method="Stars",
+            final_price_usd=float(price_decimal)
+        )
         try:
-            create_pending_transaction(payment_id, callback.from_user.id, float(price_decimal), metadata)
+            create_pending_transaction(payment_id, callback.from_user.id, float(price_decimal), metadata, amount_usd=float(price_decimal), currency_name="XTR", amount_currency=float(stars_count))
         except Exception as e:
             logger.warning(f"Stars покупка: не удалось создать ожидающую транзакцию: {e}")
         payload = payment_id
@@ -2936,22 +3071,14 @@ def get_user_router() -> Router:
         aaio_currency = user_curr if user_curr in ["RUB", "UAH", "EUR", "USD"] else "RUB"
         customer_email = data.get('customer_email') or get_setting("receipt_email")
 
-        metadata = {
-            "payment_id": order_id,
-            "user_id": user_id,
-            "months": int(plan['months']),
-            "price": final_price_usd,
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": customer_email,
-            "payment_method": "Aaio",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
+        metadata = _build_order_metadata(
+            user_id=user_id,
+            order_id=order_id,
+            plan=plan,
+            data=data,
+            payment_method="Aaio",
+            final_price_usd=final_price_usd
+        )
 
         try:
             create_pending_transaction(
@@ -3005,22 +3132,14 @@ def get_user_router() -> Router:
         order_id = str(uuid.uuid4())
         customer_email = data.get('customer_email') or get_setting("receipt_email")
 
-        metadata = {
-            "payment_id": order_id,
-            "user_id": user_id,
-            "months": int(plan['months']),
-            "price": final_price_usd,
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": customer_email,
-            "payment_method": "Cryptomus",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
+        metadata = _build_order_metadata(
+            user_id=user_id,
+            order_id=order_id,
+            plan=plan,
+            data=data,
+            payment_method="Cryptomus",
+            final_price_usd=final_price_usd
+        )
 
         try:
             create_pending_transaction(
@@ -3057,9 +3176,9 @@ def get_user_router() -> Router:
             await callback.message.edit_text("❌ Не удалось создать счёт Cryptomus. Попробуйте другой способ оплаты.")
             await state.clear()
 
-    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_payok")
-    async def create_payok_payment_handler(callback: types.CallbackQuery, state: FSMContext):
-        await callback.answer("Создаю ссылку на оплату через PayOK...")
+    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data.startswith("pay:anypay") | (F.data == "pay_anypay"))
+    async def create_anypay_payment_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт в AnyPay...")
         data = await state.get_data()
         user_id = callback.from_user.id
         plan = get_plan_by_id(data.get('plan_id'))
@@ -3068,77 +3187,85 @@ def get_user_router() -> Router:
             await state.clear()
             return
 
+        import time
         final_price_usd = float(data.get('final_price', plan['price']))
-        order_id = str(uuid.uuid4())
-        user_curr = get_user_preferred_currency(user_id)
-        cfg_curr = (get_setting("payok_currency") or "RUB").upper().strip()
-        payok_currency = user_curr if user_curr in ["RUB", "USD"] else cfg_curr
+        if callback.data and callback.data.startswith("pay:anypay:"):
+            parts = callback.data.split(":")
+            cand = ''.join(filter(str.isdigit, parts[2] if len(parts) > 2 else ""))
+            order_id = cand[-9:] if cand else str(int(time.time() * 1000))[-9:]
+        else:
+            order_id = str(int(time.time() * 1000))[-9:]
+
+        amount_rub, rate = currency_service.convert_from_usd(final_price_usd, "RUB")
+        amount_rub = round(float(amount_rub), 2)
+        if amount_rub < 50.0:
+            amount_rub = 50.0
+        rate = float(rate)
         customer_email = data.get('customer_email') or get_setting("receipt_email") or f"user_{user_id}@shop.local"
 
-        metadata = {
-            "payment_id": order_id,
-            "user_id": user_id,
-            "months": int(plan['months']),
-            "price": final_price_usd,
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": customer_email,
-            "payment_method": "PayOK",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
-
-        pay_url, converted_amount, rate = payok_payment.create_payok_payment_url(
+        metadata = _build_order_metadata(
+            user_id=user_id,
             order_id=order_id,
-            amount_usd=final_price_usd,
-            target_currency=payok_currency,
-            description=f"Оплата VPN #{order_id[:8]}",
-            email=customer_email
+            plan=plan,
+            data=data,
+            payment_method="AnyPay",
+            final_price_usd=final_price_usd
         )
 
-        if not pay_url:
-            await callback.message.edit_text("❌ Не удалось создать счёт PayOK. Попробуйте другой способ оплаты.")
+        payment_result = await anypay_payment.create_anypay_payment(
+            order_id=order_id,
+            amount_rub=amount_rub,
+            description=f"Оплата подписки NeoVPN #{order_id}",
+            currency="RUB"
+        )
+        if isinstance(payment_result, tuple):
+            pay_url = payment_result[1] if len(payment_result) > 1 and payment_result[0] else None
+        else:
+            pay_url = payment_result
+
+        if not pay_url or not isinstance(pay_url, str) or not str(pay_url).startswith("http"):
+            await callback.message.edit_text("❌ Не удалось создать счёт AnyPay. Попробуйте другой способ оплаты.")
             await state.clear()
             return
+
+        pay_url = str(pay_url).strip()
+        logger.info(f"[AnyPay Debug] subscription payment_url: {pay_url}")
 
         try:
             create_pending_transaction(
                 payment_id=order_id,
                 user_id=user_id,
-                amount_rub=float(currency_service.convert_from_usd(final_price_usd, "RUB")),
+                amount_rub=amount_rub,
                 metadata=metadata,
-                provider="payok",
+                provider="anypay",
                 provider_payment_id=order_id,
                 amount_usd=final_price_usd,
                 exchange_rate=rate,
-                currency_name=payok_currency,
-                amount_currency=converted_amount,
-                pay_currency=payok_currency,
+                currency_name="RUB",
+                amount_currency=amount_rub,
+                external_invoice_id=order_id,
+                pay_currency="RUB",
                 exchange_rate_used=rate
             )
         except Exception as e:
-            logger.warning(f"PayOK: не удалось создать pending-транзакцию: {e}")
+            logger.warning(f"AnyPay: не удалось создать pending-транзакцию: {e}")
 
         await callback.message.edit_text(
-            f"Счёт на оплату через PayOK сформирован:\n"
-            f"Сумма к оплате: <b>{converted_amount:.2f} {payok_currency}</b> (~${final_price_usd:.2f} USD)\n\n"
-            f"Нажмите кнопку ниже для перехода к оплате:",
+            f"Счёт на оплату через AnyPay сформирован:\n"
+            f"Сумма к оплате: <b>{amount_rub:.2f} RUB</b> (~${final_price_usd:.2f} USD)\n\n"
+            f"Нажмите кнопку ниже для перехода к оплате банковской картой или СБП:",
             reply_markup=keyboards.create_invoice_payment_keyboard(
                 payment_url=pay_url,
-                check_callback=f"check_payment_payok_{order_id}",
+                check_callback=f"check_payment_anypay_{order_id}",
                 cancel_callback="cancel_payment"
             ),
             parse_mode="HTML"
         )
         await state.clear()
 
-    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_lavatop")
-    async def create_lavatop_payment_handler(callback: types.CallbackQuery, state: FSMContext):
-        await callback.answer("Создаю счёт в Lava.top...")
+    @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data.startswith("pay:platega") | (F.data == "pay_platega"))
+    async def create_platega_payment_handler(callback: types.CallbackQuery, state: FSMContext):
+        await callback.answer("Создаю счёт в Platega.io...")
         data = await state.get_data()
         user_id = callback.from_user.id
         plan = get_plan_by_id(data.get('plan_id'))
@@ -3148,42 +3275,34 @@ def get_user_router() -> Router:
             return
 
         final_price_usd = float(data.get('final_price', plan['price']))
-        order_id = str(uuid.uuid4())
-        user_curr = get_user_preferred_currency(user_id)
-        cfg_curr = (get_setting("lavatop_currency") or "RUB").upper().strip()
-        lavatop_currency = user_curr if user_curr in ["RUB", "USD"] else cfg_curr
+        if callback.data and callback.data.startswith("pay:platega:"):
+            parts = callback.data.split(":")
+            order_id = parts[2] if len(parts) > 2 and parts[2] else str(uuid.uuid4())
+        else:
+            order_id = str(uuid.uuid4())
+
+        amount_rub, rate = currency_service.convert_from_usd(final_price_usd, "RUB")
+        amount_rub = round(float(amount_rub), 2)
+        rate = float(rate)
         customer_email = data.get('customer_email') or get_setting("receipt_email") or f"user_{user_id}@shop.local"
 
-        metadata = {
-            "payment_id": order_id,
-            "user_id": user_id,
-            "months": int(plan['months']),
-            "price": final_price_usd,
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": customer_email,
-            "payment_method": "Lava.top",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
-
-        pay_url, invoice_id, converted_amount, rate = await asyncio.to_thread(
-            lavatop_payment.create_lavatop_invoice,
+        metadata = _build_order_metadata(
+            user_id=user_id,
             order_id=order_id,
-            amount_usd=final_price_usd,
-            telegram_id=user_id,
-            tariff_id=int(data.get('plan_id') or 0),
-            keys_count=int(data.get('quantity', 1)),
-            target_currency=lavatop_currency,
-            email=customer_email
+            plan=plan,
+            data=data,
+            payment_method="Platega",
+            final_price_usd=final_price_usd
         )
 
-        if not pay_url:
-            await callback.message.edit_text("❌ Не удалось создать счёт Lava.top. Попробуйте другой способ оплаты.")
+        ok, pay_url, tx_id = await platega_payment.create_platega_payment(
+            order_id=order_id,
+            amount_rub=amount_rub,
+            description=f"Оплата тарифа #{order_id[:8]}"
+        )
+
+        if not ok or not pay_url:
+            await callback.message.edit_text("❌ Не удалось создать счёт Platega.io. Попробуйте другой способ оплаты.")
             await state.clear()
             return
 
@@ -3191,44 +3310,40 @@ def get_user_router() -> Router:
             create_pending_transaction(
                 payment_id=order_id,
                 user_id=user_id,
-                amount_rub=float(currency_service.convert_from_usd(final_price_usd, "RUB")),
+                amount_rub=amount_rub,
                 metadata=metadata,
-                provider="lavatop",
-                provider_payment_id=invoice_id or order_id,
+                provider="platega",
+                provider_payment_id=tx_id or order_id,
                 amount_usd=final_price_usd,
                 exchange_rate=rate,
-                currency_name=lavatop_currency,
-                amount_currency=converted_amount,
-                external_invoice_id=invoice_id,
-                pay_currency=lavatop_currency,
+                currency_name="RUB",
+                amount_currency=amount_rub,
+                external_invoice_id=tx_id,
+                pay_currency="RUB",
                 exchange_rate_used=rate
             )
         except Exception as e:
-            logger.warning(f"Lava.top: не удалось создать pending-транзакцию: {e}")
+            logger.warning(f"Platega: не удалось создать pending-транзакцию: {e}")
 
         await callback.message.edit_text(
-            f"Счёт на оплату через Lava.top сформирован:\n"
-            f"Сумма к оплате: <b>{converted_amount:.2f} {lavatop_currency}</b> (~${final_price_usd:.2f} USD)\n\n"
+            f"Счёт на оплату через Platega сформирован:\n"
+            f"Сумма к оплате: <b>{amount_rub:.2f} RUB</b> (~${final_price_usd:.2f} USD)\n\n"
             f"Нажмите кнопку ниже для перехода к оплате банковской картой или СБП:",
             reply_markup=keyboards.create_invoice_payment_keyboard(
                 payment_url=pay_url,
-                check_callback=f"check_lava_{order_id}",
+                check_callback=f"check_payment_platega_{order_id}",
                 cancel_callback="cancel_payment"
             ),
             parse_mode="HTML"
         )
         await state.clear()
 
-    @user_router.callback_query(F.data.startswith("check_payment_") | F.data.startswith("check_lava_"))
+    @user_router.callback_query(F.data.startswith("check_payment_"))
     async def check_provider_payment_callback(callback: types.CallbackQuery, bot: Bot):
         await callback.answer("Проверяю статус оплаты...")
-        if callback.data.startswith("check_lava_"):
-            provider = "lavatop"
-            order_id = callback.data.replace("check_lava_", "", 1)
-        else:
-            parts = callback.data.split("_")
-            provider = parts[2]
-            order_id = "_".join(parts[3:])
+        parts = callback.data.split("_")
+        provider = parts[2]
+        order_id = "_".join(parts[3:])
 
         tx = get_transaction_by_provider_payment_id(provider, order_id)
         if tx and tx.get("status") in ("paid", "completed", "success"):
@@ -3249,26 +3364,28 @@ def get_user_router() -> Router:
                     await callback.message.edit_text("✅ Оплата успешно получена и активирована!")
                     return
 
-        elif provider in ("lavatop", "lava"):
-            invoice_id = (tx.get("external_invoice_id") or tx.get("provider_payment_id") or order_id) if tx else order_id
-            res = await asyncio.to_thread(lavatop_payment.check_lavatop_invoice_status, invoice_id=invoice_id)
-            data = res.get("data") if isinstance(res.get("data"), dict) else res
-            status = str(data.get("status") or "").lower()
-            if status in ["paid", "success", "completed"]:
+        elif provider == "anypay":
+            status = await anypay_payment.check_anypay_status(order_id)
+            if status and str(status).lower() in ["paid", "success", "completed"]:
                 tx_completed = find_and_complete_pending_transaction(
                     payment_id=order_id,
                     amount_rub=None,
-                    payment_method="Lava.top"
+                    payment_method="AnyPay"
                 )
                 if tx_completed:
                     await process_successful_payment(bot, tx_completed)
-                    await callback.message.edit_text("✅ Оплата через Lava.top успешно подтверждена и подписка активирована!")
+                    await callback.message.edit_text("✅ Оплата через AnyPay успешно подтверждена и подписка активирована!")
+                    return
+            else:
+                tx_check = get_transaction_by_provider_payment_id("anypay", order_id)
+                if tx_check and tx_check.get("status") in ("paid", "completed", "success"):
+                    await callback.message.edit_text("✅ Оплата через AnyPay подтверждена и обработана!")
                     return
 
-        elif provider == "payok":
-            tx_check = get_transaction_by_provider_payment_id("payok", order_id)
+        elif provider == "platega":
+            tx_check = get_transaction_by_provider_payment_id("platega", order_id)
             if tx_check and tx_check.get("status") in ("paid", "completed", "success"):
-                await callback.message.edit_text("✅ Оплата через PayOK подтверждена и обработана!")
+                await callback.message.edit_text("✅ Оплата через Platega подтверждена и обработана!")
                 return
 
         await callback.answer("⏳ Оплата ещё обрабатывается. Если вы уже оплатили, подождите 1-2 минуты.", show_alert=True)
@@ -3462,21 +3579,45 @@ async def _create_heleket_payment_request(
             return None
 
         # Метаданные, которые затем будут разобраны в webhook (`description` JSON)
+        plan_obj = get_plan_by_id(state_data.get("plan_id")) if state_data.get("plan_id") else {}
+        resolved_host_name = host_name or (plan_obj.get('host_name') if plan_obj else '')
+        resolved_host_id = state_data.get("host_id") or (plan_obj.get("host_id") if plan_obj else 1) or 1
+        resolved_plan_name = (plan_obj.get('plan_name') if plan_obj else '') or f"{months} мес."
+        resolved_action = state_data.get("action") or ("extend" if state_data.get("key_id") else "new")
+        payment_id = str(uuid.uuid4())
+
         metadata = {
-            "payment_id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "months": months,
+            "payment_id": payment_id,
+            "user_id": int(user_id),
+            "months": int(months),
             "price": float(price),
-            "action": state_data.get("action"),
+            "action": str(resolved_action),
             "key_id": state_data.get("key_id"),
-            "host_name": host_name,
+            "host_name": str(resolved_host_name),
+            "host_id": int(resolved_host_id),
             "plan_id": state_data.get("plan_id"),
+            "plan_name": str(resolved_plan_name),
             "customer_email": state_data.get("customer_email"),
-            "payment_method": "Crypto",
+            "payment_method": "Heleket",
             "promo_code": state_data.get("promo_code"),
             "promo_discount_percent": state_data.get('promo_discount_percent'),
             "promo_discount_amount": state_data.get('promo_discount_amount'),
         }
+
+        try:
+            create_pending_transaction(
+                payment_id=payment_id,
+                user_id=int(user_id),
+                amount_rub=float(price),
+                metadata=metadata,
+                provider="heleket",
+                provider_payment_id=payment_id,
+                amount_usd=float(price),
+                currency_name="USD",
+                amount_currency=float(price)
+            )
+        except Exception as e_pend:
+            logger.warning(f"Heleket: не удалось сохранить pending транзакцию: {e_pend}")
 
         # Базовые поля счёта для Heleket
         dom_val = get_setting("domain")
@@ -3484,7 +3625,7 @@ async def _create_heleket_payment_request(
         callback_url = None
         try:
             if domain:
-                callback_url = f"{str(domain).rstrip('/')}/heleket-webhook"
+                callback_url = f"{str(domain).rstrip('/')}/webhook/heleket"
         except Exception:
             callback_url = None
 
@@ -3498,7 +3639,7 @@ async def _create_heleket_payment_request(
 
         data: Dict[str, object] = {
             "merchant_id": merchant_id,
-            "order_id": str(uuid.uuid4()),
+            "order_id": payment_id,
             "amount": float(price),
             "currency": "RUB",
             "description": json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
@@ -3798,6 +3939,27 @@ async def process_successful_payment(bot: Bot, metadata: dict):
         customer_email = metadata.get('customer_email')
         payment_method = metadata.get('payment_method')
 
+        if not action:
+            action = "extend" if key_id and int(key_id) > 0 else "new"
+            metadata['action'] = action
+
+        if plan_id:
+            try:
+                p_obj = get_plan_by_id(plan_id)
+                if p_obj:
+                    if not host_name:
+                        host_name = p_obj.get('host_name', '')
+                        metadata['host_name'] = host_name
+                    if not months and p_obj.get('months'):
+                        months = int(p_obj['months'])
+                        metadata['months'] = months
+                    if not metadata.get('plan_name'):
+                        metadata['plan_name'] = p_obj.get('plan_name') or f"{months} мес."
+                    if not metadata.get('host_id') and p_obj.get('host_id'):
+                        metadata['host_id'] = p_obj.get('host_id')
+            except Exception as e_res:
+                logger.warning(f"process_successful_payment: ошибка восстановления полей плана: {e_res}")
+
         chat_id_to_delete = metadata.get('chat_id')
         message_id_to_delete = metadata.get('message_id')
         
@@ -4071,12 +4233,17 @@ async def process_successful_payment(bot: Bot, metadata: dict):
         log_amount_rub = float(price)
         log_method = metadata.get('payment_method', 'Unknown')
         
-        log_metadata = json.dumps({
-            "plan_id": metadata.get('plan_id'),
-            "plan_name": get_plan_by_id(metadata.get('plan_id')).get('plan_name', 'Unknown') if get_plan_by_id(metadata.get('plan_id')) else 'Unknown',
-            "host_name": metadata.get('host_name'),
-            "customer_email": metadata.get('customer_email')
-        })
+        log_meta_dict = dict(metadata)
+        if not log_meta_dict.get('plan_name') and plan_id:
+            try:
+                p_obj = get_plan_by_id(plan_id)
+                if p_obj:
+                    log_meta_dict['plan_name'] = p_obj.get('plan_name') or f"{months} мес."
+                    if not log_meta_dict.get('host_name'):
+                        log_meta_dict['host_name'] = p_obj.get('host_name') or ''
+            except Exception:
+                pass
+        log_metadata = json.dumps(log_meta_dict, ensure_ascii=False)
 
         # Определяем payment_id для лога: берём из metadata, если есть (например, при отложенных транзакциях), иначе генерируем новый UUID
         payment_id_for_log = metadata.get('payment_id') or str(uuid.uuid4())

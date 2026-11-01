@@ -22,6 +22,7 @@
             data-confirm="Удалить тикет #{{ t.ticket_id }}? Это действие необратимо."
             data-ajax="delete"
             data-refresh-target="support-tbody">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <button type="submit" class="btn btn-sm btn-danger btn-glass" title="Удалить" data-bs-toggle="tooltip" aria-label="Удалить"><i class="ti ti-trash"></i></button>
       </form>
     </div>

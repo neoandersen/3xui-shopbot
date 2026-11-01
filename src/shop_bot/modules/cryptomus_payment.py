@@ -121,7 +121,7 @@ def create_cryptomus_invoice(
         "merchant": merchant_id,
         "sign": sign,
         "Content-Type": "application/json",
-        "User-Agent": "NeoVPN-ShopBot/1.3.0"
+        "User-Agent": "NeoVPN-ShopBot/1.4.0"
     }
 
     url = f"{CRYPTOMUS_API_BASE}/payment"
@@ -164,7 +164,7 @@ def check_cryptomus_payment_status(order_id: Optional[str] = None, uuid_val: Opt
         "merchant": merchant_id,
         "sign": sign,
         "Content-Type": "application/json",
-        "User-Agent": "NeoVPN-ShopBot/1.3.0"
+        "User-Agent": "NeoVPN-ShopBot/1.4.0"
     }
     url = f"{CRYPTOMUS_API_BASE}/payment/info"
     req = urllib.request.Request(url, data=compact_json.encode("utf-8"), headers=headers, method="POST")
