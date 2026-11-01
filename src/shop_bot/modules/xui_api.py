@@ -272,6 +272,19 @@ def update_or_create_client_on_panel(api: Api, inbound_id: int, email: str, days
                             pass
             except Exception:
                 pass
+
+            # Продление клиента: пробуем api.client.update(client_uuid, existing_client)
+            updated = False
+            if hasattr(api, 'client') and hasattr(api.client, 'update'):
+                try:
+                    api.client.update(client_uuid, existing_client)
+                    updated = True
+                    logger.info(f"Клиент {email} ({client_uuid}) успешно обновлён через api.client.update.")
+                except Exception as update_err:
+                    logger.warning(f"api.client.update завершился с ошибкой: {update_err}, выполняю fallback на inbound.update...")
+            if not updated:
+                api.inbound.update(inbound_id, inbound_to_modify)
+                logger.info(f"Клиент {email} обновлён через api.inbound.update (fallback).")
         else:
             client_uuid = str(uuid.uuid4())
             new_client = Client(
@@ -297,9 +310,20 @@ def update_or_create_client_on_panel(api: Api, inbound_id: int, email: str, days
                         pass
             except Exception:
                 pass
-            inbound_to_modify.settings.clients.append(new_client)
 
-        api.inbound.update(inbound_id, inbound_to_modify)
+            # Создание нового клиента: прямой вызов api.client.add
+            added = False
+            if hasattr(api, 'client') and hasattr(api.client, 'add'):
+                try:
+                    api.client.add(inbound_id=inbound_id, clients=[new_client])
+                    added = True
+                    logger.info(f"Новый клиент {email} ({client_uuid}) успешно добавлен в 3X-UI через api.client.add.")
+                except Exception as add_err:
+                    logger.warning(f"api.client.add завершился с ошибкой: {add_err}, выполняю fallback на inbound.update...")
+            if not added:
+                inbound_to_modify.settings.clients.append(new_client)
+                api.inbound.update(inbound_id, inbound_to_modify)
+                logger.info(f"Новый клиент {email} добавлен через api.inbound.update (fallback).")
 
         return client_uuid, new_expiry_ms, client_sub_token
 

@@ -343,7 +343,6 @@ map $request_uri $limit_req_exempt_key {
     default $binary_remote_addr;
     ~^/webhook/ "";
     ~^/.*webhook.* "";
-    ~^/payok-webhook "";
     ~^/anypay-webhook "";
     ~^/payment/anypay/notify "";
     ~^/cryptomus-webhook "";

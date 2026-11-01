@@ -544,7 +544,7 @@ def initialize_db():
                     cursor.execute("ALTER TABLE transactions ADD COLUMN provider TEXT")
                 if 'provider_payment_id' not in tx_cols:
                     cursor.execute("ALTER TABLE transactions ADD COLUMN provider_payment_id TEXT")
-                # v1.4.0: PayOK & Lava.top fields
+                # v1.4.0: Extended transaction fields
                 if 'external_invoice_id' not in tx_cols:
                     cursor.execute("ALTER TABLE transactions ADD COLUMN external_invoice_id TEXT")
                 if 'pay_currency' not in tx_cols:
@@ -1558,7 +1558,7 @@ def find_and_complete_pending_transaction(
                 logger.warning(f"Ожидающая транзакция не найдена для payment_id={payment_id}")
                 return None
 
-            tx_id = transaction['id'] if 'id' in transaction.keys() else None
+            tx_id = transaction['transaction_id'] if 'transaction_id' in transaction.keys() else (transaction['id'] if 'id' in transaction.keys() else None)
             if tx_id:
                 cursor.execute(
                     """
@@ -1568,7 +1568,7 @@ def find_and_complete_pending_transaction(
                         amount_currency = COALESCE(?, amount_currency),
                         currency_name = COALESCE(?, currency_name),
                         payment_method = COALESCE(?, payment_method)
-                    WHERE id = ?
+                    WHERE transaction_id = ?
                     """,
                     (amount_rub, amount_currency, currency_name, payment_method, tx_id)
                 )
@@ -2749,15 +2749,52 @@ def get_paginated_transactions(page: int = 1, per_page: int = 15) -> tuple[list[
                 metadata_str = transaction_dict.get('metadata')
                 if metadata_str:
                     try:
-                        metadata = json.loads(metadata_str)
-                        transaction_dict['host_name'] = metadata.get('host_name', 'N/A')
-                        transaction_dict['plan_name'] = metadata.get('plan_name', 'N/A')
-                    except json.JSONDecodeОшибка:
-                        transaction_dict['host_name'] = 'Ошибка'
-                        transaction_dict['plan_name'] = 'Ошибка'
+                        metadata = json.loads(metadata_str) if isinstance(metadata_str, str) else dict(metadata_str)
+                        h_name = metadata.get('host_name')
+                        p_name = metadata.get('plan_name')
+                        if (not h_name or not p_name) and metadata.get('plan_id'):
+                            try:
+                                p_obj = get_plan_by_id(metadata.get('plan_id'))
+                                if p_obj:
+                                    h_name = h_name or p_obj.get('host_name')
+                                    p_name = p_name or p_obj.get('plan_name') or f"{p_obj.get('months', 1)} мес."
+                            except Exception:
+                                pass
+                        if not p_name and metadata.get('months'):
+                            p_name = f"{metadata.get('months')} мес."
+                        if not h_name:
+                            try:
+                                u_keys = get_user_keys(transaction_dict.get('user_id'))
+                                if u_keys:
+                                    h_name = u_keys[0].get('host_name')
+                            except Exception:
+                                pass
+                        if not h_name or not p_name:
+                            try:
+                                amt = float(transaction_dict.get('amount_usd') or transaction_dict.get('amount_rub') or 0.0)
+                                for p in get_plans():
+                                    if abs(float(p.get('price', 0)) - amt) < 0.1:
+                                        h_name = h_name or p.get('host_name')
+                                        p_name = p_name or p.get('plan_name') or f"{p.get('months', 1)} мес."
+                                        break
+                            except Exception:
+                                pass
+                        transaction_dict['host_name'] = h_name or 'N/A'
+                        transaction_dict['plan_name'] = p_name or 'N/A'
+                    except Exception:
+                        transaction_dict['host_name'] = 'N/A'
+                        transaction_dict['plan_name'] = 'N/A'
                 else:
-                    transaction_dict['host_name'] = 'N/A'
-                    transaction_dict['plan_name'] = 'N/A'
+                    h_name = None
+                    p_name = None
+                    try:
+                        u_keys = get_user_keys(transaction_dict.get('user_id'))
+                        if u_keys:
+                            h_name = u_keys[0].get('host_name')
+                    except Exception:
+                        pass
+                    transaction_dict['host_name'] = h_name or 'N/A'
+                    transaction_dict['plan_name'] = p_name or 'N/A'
                 
                 transactions.append(transaction_dict)
             
@@ -2827,22 +2864,52 @@ def add_new_key(
         import secrets
         final_sub_id = (sub_id or secrets.token_hex(16)).strip()
         final_key_name = key_name or "Ключ"
+
+        # Разрешаем актуальный host_id по имени хоста, если передан дефолтный 1
+        if host_name:
+            try:
+                h_obj = get_host(host_name)
+                if h_obj and h_obj.get('host_id'):
+                    host_id = int(h_obj['host_id'])
+            except Exception:
+                pass
+
+        new_key_id = None
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            expiry_date = datetime.fromtimestamp(expiry_timestamp_ms / 1000) if expiry_timestamp_ms else datetime.now()
-            # 1. Insert into user_keys (v1.3.0 multi-key primary)
-            cursor.execute("""
-                INSERT INTO user_keys (
-                    user_id, host_id, host_name, key_name,
-                    client_uuid, email, sub_id, expiry_time, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
-            """, (
-                user_id, host_id, host_name, final_key_name,
-                xui_client_uuid, key_email, final_sub_id, int(expiry_timestamp_ms or 0)
-            ))
-            new_key_id = cursor.lastrowid
 
-            # 2. Maintain vpn_keys table sync for backwards compatibility
+            # Гарантируем наличие пользователя в users для соблюдения FK
+            try:
+                cursor.execute("SELECT telegram_id FROM users WHERE telegram_id = ?", (user_id,))
+                if not cursor.fetchone():
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO users (telegram_id, username, total_spent, total_months) VALUES (?, ?, 0.0, 0)",
+                        (user_id, f"user{user_id}")
+                    )
+                    conn.commit()
+            except Exception as e_user:
+                logging.warning(f"add_new_key: проверка/создание пользователя {user_id}: {e_user}")
+
+            expiry_date = datetime.fromtimestamp(expiry_timestamp_ms / 1000) if expiry_timestamp_ms else datetime.now()
+
+            # 1. Вставка в user_keys
+            try:
+                cursor.execute("""
+                    INSERT INTO user_keys (
+                        user_id, host_id, host_name, key_name,
+                        client_uuid, email, sub_id, expiry_time, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                """, (
+                    user_id, host_id, host_name, final_key_name,
+                    xui_client_uuid, key_email, final_sub_id, int(expiry_timestamp_ms or 0)
+                ))
+                new_key_id = cursor.lastrowid
+                conn.commit()
+                logging.info(f"Ключ успешно зафиксирован в user_keys: id={new_key_id}, user_id={user_id}, email={key_email}")
+            except Exception as e_uk:
+                logging.error(f"Не удалось добавить ключ в user_keys для user {user_id} ({key_email}): {e_uk}", exc_info=True)
+
+            # 2. Синхронизация с vpn_keys
             try:
                 cursor.execute("""
                     INSERT OR REPLACE INTO vpn_keys (
@@ -2851,13 +2918,14 @@ def add_new_key(
                 """, (
                     new_key_id, user_id, host_name, xui_client_uuid, key_email, expiry_date, final_key_name
                 ))
+                conn.commit()
+                logging.info(f"Синхронизация vpn_keys выполнена для key_id={new_key_id}, email={key_email}")
             except Exception as e_vpn:
-                logger.debug(f"vpn_keys sync notice: {e_vpn}")
+                logging.error(f"Не удалось синхронизировать vpn_keys для key_id={new_key_id}: {e_vpn}", exc_info=True)
 
-            conn.commit()
             return new_key_id
     except sqlite3.Error as e:
-        logging.error(f"Не удалось add new key for user {user_id}: {e}")
+        logging.error(f"Критическая ошибка add_new_key для user {user_id}: {e}", exc_info=True)
         return None
 
 def delete_key_by_email(email: str) -> bool:
@@ -3094,6 +3162,7 @@ def get_recent_transactions(limit: int = 15) -> list[dict]:
                 LIMIT ?;
             """
             cursor.execute(query, (limit,))
+            transactions = [dict(r) for r in cursor.fetchall()]
     except sqlite3.Error as e:
         logging.error(f"Не удалось get recent transactions: {e}")
     return transactions

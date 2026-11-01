@@ -2604,6 +2604,41 @@ def get_user_router() -> Router:
         await callback.message.answer("Промокод удалён.")
         await show_payment_options(callback.message, state)
 
+    def _build_order_metadata(
+        user_id: int,
+        order_id: str,
+        plan: dict,
+        data: dict,
+        payment_method: str,
+        final_price_usd: float
+    ) -> dict:
+        host_name = data.get('host_name') or plan.get('host_name') or ''
+        host_id = data.get('host_id') or plan.get('host_id') or 1
+        plan_id = plan.get('plan_id') or data.get('plan_id')
+        plan_name = plan.get('plan_name') or f"{plan.get('months', 1)} мес."
+        action = data.get('action') or ('extend' if data.get('key_id') else 'new')
+        months = int(plan.get('months') or data.get('months') or 1)
+        customer_email = data.get('customer_email') or get_setting("receipt_email") or f"user_{user_id}@shop.local"
+
+        return {
+            "payment_id": str(order_id),
+            "user_id": int(user_id),
+            "action": str(action),
+            "host_name": str(host_name),
+            "host_id": int(host_id) if host_id else 1,
+            "plan_id": int(plan_id) if plan_id else None,
+            "plan_name": str(plan_name),
+            "months": months,
+            "price": float(final_price_usd),
+            "quantity": int(data.get('quantity', 1)),
+            "key_id": data.get('key_id'),
+            "customer_email": str(customer_email),
+            "payment_method": str(payment_method),
+            "promo_code": data.get('promo_code'),
+            "promo_discount_percent": data.get('promo_discount_percent'),
+            "promo_discount_amount": data.get('promo_discount_amount'),
+        }
+
     @user_router.callback_query(PaymentProcess.waiting_for_payment_method, F.data == "pay_yookassa")
     async def create_yookassa_payment_handler(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Создаю ссылку на оплату...")
@@ -2754,21 +2789,14 @@ def get_user_router() -> Router:
         months = int(plan['months'])
         user_id = callback.from_user.id
         payment_id = str(uuid.uuid4())
-        metadata = {
-            "payment_id": payment_id,
-            "user_id": user_id,
-            "months": months,
-            "price": final_price_usd,
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": data.get('customer_email'),
-            "payment_method": "YooMoney",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
+        metadata = _build_order_metadata(
+            user_id=user_id,
+            order_id=payment_id,
+            plan=plan,
+            data=data,
+            payment_method="YooMoney",
+            final_price_usd=final_price_usd
+        )
         # Сохраняем pending транзакцию в БД
         try:
             create_pending_transaction(payment_id, user_id, amount_rub, metadata, amount_usd=final_price_usd, currency_name="RUB", amount_currency=amount_rub)
@@ -2825,23 +2853,16 @@ def get_user_router() -> Router:
         stars_count = _calc_stars_amount(price_decimal)
         # Для Stars ограничим payload до UUID, метаданные сохраним в pending‑транзакцию
         payment_id = str(uuid.uuid4())
-        metadata = {
-            "user_id": callback.from_user.id,
-            "months": months,
-            "price": float(price_decimal),
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": data.get('customer_email'),
-            "payment_method": "Stars",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
+        metadata = _build_order_metadata(
+            user_id=callback.from_user.id,
+            order_id=payment_id,
+            plan=plan,
+            data=data,
+            payment_method="Stars",
+            final_price_usd=float(price_decimal)
+        )
         try:
-            create_pending_transaction(payment_id, callback.from_user.id, float(price_decimal), metadata)
+            create_pending_transaction(payment_id, callback.from_user.id, float(price_decimal), metadata, amount_usd=float(price_decimal), currency_name="XTR", amount_currency=float(stars_count))
         except Exception as e:
             logger.warning(f"Stars покупка: не удалось создать ожидающую транзакцию: {e}")
         payload = payment_id
@@ -3050,22 +3071,14 @@ def get_user_router() -> Router:
         aaio_currency = user_curr if user_curr in ["RUB", "UAH", "EUR", "USD"] else "RUB"
         customer_email = data.get('customer_email') or get_setting("receipt_email")
 
-        metadata = {
-            "payment_id": order_id,
-            "user_id": user_id,
-            "months": int(plan['months']),
-            "price": final_price_usd,
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": customer_email,
-            "payment_method": "Aaio",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
+        metadata = _build_order_metadata(
+            user_id=user_id,
+            order_id=order_id,
+            plan=plan,
+            data=data,
+            payment_method="Aaio",
+            final_price_usd=final_price_usd
+        )
 
         try:
             create_pending_transaction(
@@ -3119,22 +3132,14 @@ def get_user_router() -> Router:
         order_id = str(uuid.uuid4())
         customer_email = data.get('customer_email') or get_setting("receipt_email")
 
-        metadata = {
-            "payment_id": order_id,
-            "user_id": user_id,
-            "months": int(plan['months']),
-            "price": final_price_usd,
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": customer_email,
-            "payment_method": "Cryptomus",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
+        metadata = _build_order_metadata(
+            user_id=user_id,
+            order_id=order_id,
+            plan=plan,
+            data=data,
+            payment_method="Cryptomus",
+            final_price_usd=final_price_usd
+        )
 
         try:
             create_pending_transaction(
@@ -3198,22 +3203,14 @@ def get_user_router() -> Router:
         rate = float(rate)
         customer_email = data.get('customer_email') or get_setting("receipt_email") or f"user_{user_id}@shop.local"
 
-        metadata = {
-            "payment_id": order_id,
-            "user_id": user_id,
-            "months": int(plan['months']),
-            "price": final_price_usd,
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": customer_email,
-            "payment_method": "AnyPay",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
+        metadata = _build_order_metadata(
+            user_id=user_id,
+            order_id=order_id,
+            plan=plan,
+            data=data,
+            payment_method="AnyPay",
+            final_price_usd=final_price_usd
+        )
 
         payment_result = await anypay_payment.create_anypay_payment(
             order_id=order_id,
@@ -3289,22 +3286,14 @@ def get_user_router() -> Router:
         rate = float(rate)
         customer_email = data.get('customer_email') or get_setting("receipt_email") or f"user_{user_id}@shop.local"
 
-        metadata = {
-            "payment_id": order_id,
-            "user_id": user_id,
-            "months": int(plan['months']),
-            "price": final_price_usd,
-            "quantity": int(data.get('quantity', 1)),
-            "action": data.get('action'),
-            "key_id": data.get('key_id'),
-            "host_name": data.get('host_name'),
-            "plan_id": data.get('plan_id'),
-            "customer_email": customer_email,
-            "payment_method": "Platega",
-            "promo_code": data.get('promo_code'),
-            "promo_discount_percent": data.get('promo_discount_percent'),
-            "promo_discount_amount": data.get('promo_discount_amount'),
-        }
+        metadata = _build_order_metadata(
+            user_id=user_id,
+            order_id=order_id,
+            plan=plan,
+            data=data,
+            payment_method="Platega",
+            final_price_usd=final_price_usd
+        )
 
         ok, pay_url, tx_id = await platega_payment.create_platega_payment(
             order_id=order_id,
@@ -3590,21 +3579,45 @@ async def _create_heleket_payment_request(
             return None
 
         # Метаданные, которые затем будут разобраны в webhook (`description` JSON)
+        plan_obj = get_plan_by_id(state_data.get("plan_id")) if state_data.get("plan_id") else {}
+        resolved_host_name = host_name or (plan_obj.get('host_name') if plan_obj else '')
+        resolved_host_id = state_data.get("host_id") or (plan_obj.get("host_id") if plan_obj else 1) or 1
+        resolved_plan_name = (plan_obj.get('plan_name') if plan_obj else '') or f"{months} мес."
+        resolved_action = state_data.get("action") or ("extend" if state_data.get("key_id") else "new")
+        payment_id = str(uuid.uuid4())
+
         metadata = {
-            "payment_id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "months": months,
+            "payment_id": payment_id,
+            "user_id": int(user_id),
+            "months": int(months),
             "price": float(price),
-            "action": state_data.get("action"),
+            "action": str(resolved_action),
             "key_id": state_data.get("key_id"),
-            "host_name": host_name,
+            "host_name": str(resolved_host_name),
+            "host_id": int(resolved_host_id),
             "plan_id": state_data.get("plan_id"),
+            "plan_name": str(resolved_plan_name),
             "customer_email": state_data.get("customer_email"),
-            "payment_method": "Crypto",
+            "payment_method": "Heleket",
             "promo_code": state_data.get("promo_code"),
             "promo_discount_percent": state_data.get('promo_discount_percent'),
             "promo_discount_amount": state_data.get('promo_discount_amount'),
         }
+
+        try:
+            create_pending_transaction(
+                payment_id=payment_id,
+                user_id=int(user_id),
+                amount_rub=float(price),
+                metadata=metadata,
+                provider="heleket",
+                provider_payment_id=payment_id,
+                amount_usd=float(price),
+                currency_name="USD",
+                amount_currency=float(price)
+            )
+        except Exception as e_pend:
+            logger.warning(f"Heleket: не удалось сохранить pending транзакцию: {e_pend}")
 
         # Базовые поля счёта для Heleket
         dom_val = get_setting("domain")
@@ -3612,7 +3625,7 @@ async def _create_heleket_payment_request(
         callback_url = None
         try:
             if domain:
-                callback_url = f"{str(domain).rstrip('/')}/heleket-webhook"
+                callback_url = f"{str(domain).rstrip('/')}/webhook/heleket"
         except Exception:
             callback_url = None
 
@@ -3626,7 +3639,7 @@ async def _create_heleket_payment_request(
 
         data: Dict[str, object] = {
             "merchant_id": merchant_id,
-            "order_id": str(uuid.uuid4()),
+            "order_id": payment_id,
             "amount": float(price),
             "currency": "RUB",
             "description": json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
@@ -3926,6 +3939,27 @@ async def process_successful_payment(bot: Bot, metadata: dict):
         customer_email = metadata.get('customer_email')
         payment_method = metadata.get('payment_method')
 
+        if not action:
+            action = "extend" if key_id and int(key_id) > 0 else "new"
+            metadata['action'] = action
+
+        if plan_id:
+            try:
+                p_obj = get_plan_by_id(plan_id)
+                if p_obj:
+                    if not host_name:
+                        host_name = p_obj.get('host_name', '')
+                        metadata['host_name'] = host_name
+                    if not months and p_obj.get('months'):
+                        months = int(p_obj['months'])
+                        metadata['months'] = months
+                    if not metadata.get('plan_name'):
+                        metadata['plan_name'] = p_obj.get('plan_name') or f"{months} мес."
+                    if not metadata.get('host_id') and p_obj.get('host_id'):
+                        metadata['host_id'] = p_obj.get('host_id')
+            except Exception as e_res:
+                logger.warning(f"process_successful_payment: ошибка восстановления полей плана: {e_res}")
+
         chat_id_to_delete = metadata.get('chat_id')
         message_id_to_delete = metadata.get('message_id')
         
@@ -4199,12 +4233,17 @@ async def process_successful_payment(bot: Bot, metadata: dict):
         log_amount_rub = float(price)
         log_method = metadata.get('payment_method', 'Unknown')
         
-        log_metadata = json.dumps({
-            "plan_id": metadata.get('plan_id'),
-            "plan_name": get_plan_by_id(metadata.get('plan_id')).get('plan_name', 'Unknown') if get_plan_by_id(metadata.get('plan_id')) else 'Unknown',
-            "host_name": metadata.get('host_name'),
-            "customer_email": metadata.get('customer_email')
-        })
+        log_meta_dict = dict(metadata)
+        if not log_meta_dict.get('plan_name') and plan_id:
+            try:
+                p_obj = get_plan_by_id(plan_id)
+                if p_obj:
+                    log_meta_dict['plan_name'] = p_obj.get('plan_name') or f"{months} мес."
+                    if not log_meta_dict.get('host_name'):
+                        log_meta_dict['host_name'] = p_obj.get('host_name') or ''
+            except Exception:
+                pass
+        log_metadata = json.dumps(log_meta_dict, ensure_ascii=False)
 
         # Определяем payment_id для лога: берём из metadata, если есть (например, при отложенных транзакциях), иначе генерируем новый UUID
         payment_id_for_log = metadata.get('payment_id') or str(uuid.uuid4())
