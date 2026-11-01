@@ -39,6 +39,12 @@ def _bind_session_to_api(api: Api, session: requests.Session) -> None:
     setattr(api, "http_session", session)
     setattr(api, "_http_session", session)
 
+    # Ensure host attribute is available on top-level api instance
+    if not getattr(api, "host", None):
+        h = getattr(getattr(api, "client", None), "host", None) or getattr(getattr(api, "inbound", None), "host", None)
+        if h:
+            setattr(api, "host", h)
+
     sub_apis = [
         getattr(api, "client", None),
         getattr(api, "inbound", None),
@@ -107,6 +113,7 @@ def login_to_host(host_url: str, username: str, password: str, inbound_id: int) 
 
         # 3. Initialize py3xui Api and bind session
         api = Api(host=host_url, username=username, password=password)
+        setattr(api, "host", base_url)
         _bind_session_to_api(api, session)
 
         current_csrf = session.headers.get("X-Csrf-Token")
@@ -208,7 +215,13 @@ def get_subscription_link(user_uuid: str, host_url: str, host_name: str | None =
 
 def update_or_create_client_on_panel(api: Api, inbound_id: int, email: str, days_to_add: int | None = None, target_expiry_ms: int | None = None) -> tuple[str | None, int | None, str | None]:
     try:
-        base_url = str(getattr(api, "host", "") or "").rstrip("/")
+        base_url = (
+            getattr(api, "host", None)
+            or getattr(getattr(api, "client", None), "host", None)
+            or getattr(getattr(api, "inbound", None), "host", None)
+            or ""
+        )
+        base_url = str(base_url).rstrip("/")
         session = getattr(api, "http_session", None) or getattr(api, "_http_session", None)
         if not session and hasattr(api, "client"):
             session = getattr(api.client, "http_session", None) or getattr(api.client, "_http_session", None)
@@ -407,7 +420,9 @@ async def create_or_update_key_on_host(host_name: str, email: str, days_to_add: 
     if not api or not inbound:
         logger.error(f"Сбой рабочего процесса: Не удалось войти или найти inbound на хосте '{host_name}'.")
         return None
-        
+
+    setattr(api, "host", host_data['host_url'].rstrip('/'))
+
     # Prefer exact expiry when provided (e.g., switching hosts), otherwise add days (purchase/extend/trial)
     client_uuid, new_expiry_ms, client_sub_token = update_or_create_client_on_panel(
         api, inbound.id, email, days_to_add=days_to_add, target_expiry_ms=expiry_timestamp_ms
