@@ -68,7 +68,7 @@ def get_currency_symbol(currency: str) -> str:
 def _fetch_fiat_rates_from_api() -> Dict[str, float]:
     """Fetch fiat exchange rates with USD base from open.er-api.com."""
     url = "https://open.er-api.com/v6/latest/USD"
-    req = urllib.request.Request(url, headers={"User-Agent": "NeoVPN-ShopBot/1.3.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "NeoVPN-ShopBot/1.4.0"})
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -89,7 +89,7 @@ def _fetch_crypto_rates_from_api() -> Dict[str, float]:
     # Try CoinGecko simple price
     ids = ",".join(COINGECKO_MAP.values())
     url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd"
-    req = urllib.request.Request(url, headers={"User-Agent": "NeoVPN-ShopBot/1.3.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "NeoVPN-ShopBot/1.4.0"})
     rates: Dict[str, float] = {}
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:

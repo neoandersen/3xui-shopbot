@@ -202,10 +202,12 @@ def create_webhook_app(bot_controller_instance):
 
     @flask_app.context_processor
     def inject_current_year():
-        # Добавляем csrf_token в шаблоны для meta и скрытых полей
+        # Добавляем csrf_token в шаблоны для meta и скрытых полей, а также текущую версию проекта
         return {
             'current_year': datetime.utcnow().year,
-            'csrf_token': generate_csrf
+            'csrf_token': generate_csrf,
+            'app_version': 'v1.4.0',
+            'version': '1.4.0'
         }
 
     def login_required(f):

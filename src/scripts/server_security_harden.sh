@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# NEOVPN Server Security Hardening & Perimeter Defense Suite (v1.3.0)
+# NEOVPN Server Security Hardening & Perimeter Defense Suite (v1.4.0)
 # Technical Spec: docs/SECURITY_HARDENING&ADMIN_INTEGRATION.md
 # ==============================================================================
 set -euo pipefail
@@ -431,7 +431,7 @@ cat <<EOF > "${AUDIT_JSON}"
     "sysctl_conf": "${SYSCTL_CONF}",
     "ufw_policy": "incoming: deny, outgoing: allow",
     "last_run_user": "$(whoami)",
-    "version": "1.3.0"
+    "version": "1.4.0"
   }
 }
 EOF

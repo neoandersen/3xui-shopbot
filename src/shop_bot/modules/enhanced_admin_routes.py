@@ -57,7 +57,7 @@ def get_default_audit_data() -> Dict[str, Any]:
             "sysctl_conf": "/etc/sysctl.d/99-neovpn-security.conf",
             "ufw_policy": "incoming: deny, outgoing: allow",
             "last_run_user": "None",
-            "version": "1.3.0",
+            "version": "1.4.0",
         },
     }
 
@@ -190,7 +190,7 @@ def execute_security_hardening() -> Tuple[bool, str, Dict[str, Any]]:
                     "sysctl_conf": "/etc/sysctl.d/99-neovpn-security.conf",
                     "ufw_policy": "incoming: deny, outgoing: allow",
                     "last_run_user": "Admin (Dev Simulation)",
-                    "version": "1.3.0",
+                    "version": "1.4.0",
                 },
             }
             try:

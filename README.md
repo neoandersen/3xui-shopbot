@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="#-быстрый-старт-установка-под-ключ">Установка и обновление</a> •
-  <a href="#-нововведения-в-релизе-v130-stable">Что нового в v1.3.0</a> •
+  <a href="#-нововведения-в-релизе-v140-stable">Что нового в v1.4.0</a> •
   <a href="#-архитектура-и-возможности">Возможности</a> •
   <a href="#-настройка-платежных-шлюзов">Платежи</a> •
   <a href="#-ai-онбординг-и-атрибуция">AI и Маркетинг</a> •
@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-1.3.0--stable-blue?style=flat-square&logo=git">
+  <img alt="version" src="https://img.shields.io/badge/version-1.4.0--stable-blue?style=flat-square&logo=git">
   <img alt="python" src="https://img.shields.io/badge/python-≥3.11-3776AB?style=flat-square&logo=python">
   <img alt="docker" src="https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker">
   <img alt="telegram" src="https://img.shields.io/badge/aiogram-3.x-2CA5E0?style=flat-square&logo=telegram">
@@ -25,9 +25,9 @@
 
 ---
 
-## ⚡ Нововведения в релизе v1.3.0 Stable
+## ⚡ Нововведения в релизе v1.4.0 Stable
 
-Версия **v1.3.0** — крупный стабильный релиз, переводящий систему на мультивалютный биллинг, архитектуру множественных ключей (1:N) и комплексную защиту периметра хостов:
+Версия **v1.4.0** — крупный стабильный релиз с мультивалютным биллингом, поддержкой платёжных шлюзов (Heleket, YooMoney, AnyPay, PayOK, LavaTop, Cryptomus), архитектурой множественных ключей (1:N) и комплексной защитой периметра хостов:
 
 ### 1. Мультивалютное биллинговое ядро (USD Base)
 - **Базовая валюта USD ($)**: Все расчеты стоимости тарифов, пополнения баланса, реферальные начисления и статистика переведены на доллары США (`USD`).
