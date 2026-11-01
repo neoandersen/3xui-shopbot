@@ -90,9 +90,11 @@
       • <b>Platega.io</b>: банковские карты РФ и СБП (авторизация по X-Secret)<br>
       • <b>Aaio</b>: банковские карты (World, UAH, RUB, KZT) и СБП (0% для самозанятых/ИП)<br>
       • <b>Cryptomus</b>: прием криптовалют (USDT, USDC, BTC, TON, ETH, LTC, XMR)<br>
+      • <b>Heleket</b>: прием криптовалют через мерчант Heleket (автоматическая валидация подписи MD5)<br>
+      • <b>CryptoBot</b>: прием криптовалютных чеков и инвойсов в Telegram Crypto Pay<br>
+      • <b>YooMoney</b>: прямые переводы на кошелек ЮMoney через Quickpay и проверку по API<br>
       • <b>Telegram Stars</b>: официальные цифровые платежи внутри Telegram<br>
-      • <b>YooKassa</b>: российские карты, СБП, опциональная фискализация чеков<br>
-      • <b>CryptoBot & Heleket</b>: прием криптовалютных чеков и инвойсов
+      • <b>YooKassa</b>: российские карты, СБП, опциональная фискализация чеков
     </td>
   </tr>
   <tr>
@@ -204,9 +206,21 @@ docker compose logs -f 3xui-shopbot
 - Включите платежи в Stars через `@BotFather` (`/mybots` -> *Bot Settings* -> *Payments*).
 - Включите переключатель Stars в панели управления ботом.
 
+### Heleket (Криптовалюты)
+- Зарегистрируйтесь на сервисе [Heleket](https://heleket.com).
+- Укажите в панели: `heleket_merchant_id` (Merchant ID) и `heleket_api_key` (API Key).
+- Автоматическая валидация подписи MD5 (`sign = md5(base64(json) + api_key)`).
+- Webhook URL: `https://panel.your-domain.com/webhook/heleket`.
+
 ### CryptoBot & YooKassa
-- **CryptoBot**: укажите API-токен приложения из `@CryptoBot` -> *Crypto Pay*. URL вебхука: `https://panel.your-domain.com/cryptobot-webhook`.
-- **YooKassa**: укажите `yookassa_shop_id` и `yookassa_secret_key`. URL вебхука: `https://panel.your-domain.com/yookassa-webhook`.
+- **CryptoBot**: укажите API-токен приложения из `@CryptoBot` -> *Crypto Pay*. URL вебхука: `https://panel.your-domain.com/webhook/cryptobot`.
+- **YooKassa**: укажите `yookassa_shop_id` и `yookassa_secret_key`. URL вебхука: `https://panel.your-domain.com/webhook/yookassa`.
+
+### YooMoney (ЮMoney кошелёк / Quickpay)
+- Укажите номер кошелька `yoomoney_wallet` (например, `41001XXXXXXXXXX`).
+- Настройте авторизацию через OAuth для автоматической проверки зачислений: укажите `yoomoney_client_id` (и при необходимости `yoomoney_client_secret`) и нажмите **Подключить YooMoney (OAuth)** либо укажите готовый `yoomoney_api_token` вручную.
+- Форма оплаты формируется через сервис ЮMoney Quickpay, а поступление средств проверяется по официальному API истории операций (`operation-history`).
+- Redirect URI для регистрации OAuth-приложения: `https://panel.your-domain.com/yoomoney/callback`.
 
 ---
 
