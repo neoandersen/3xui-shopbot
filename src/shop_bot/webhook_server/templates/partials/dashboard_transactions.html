@@ -7,5 +7,13 @@
   <td>{{ tx.plan_name }}</td>
   <td>${{ (tx.amount_usd or tx.amount_rub) | round(2) }}</td>
   <td>{{ tx.created_date.split(' ')[0] }}</td>
+  <td style="text-align: center;">
+    <button class="btn-delete-tx" 
+            data-payment-id="{{ tx.payment_id or tx.transaction_id }}" 
+            title="Удалить транзакцию"
+            style="background: transparent; border: none; color: #ff5c5c; cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 14px;">
+      <i class="ti ti-trash"></i>
+    </button>
+  </td>
 </tr>
 {% endfor %}

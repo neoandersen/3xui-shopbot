@@ -93,6 +93,7 @@
                 <th>План</th>
                 <th>Цена ($)</th>
                 <th>Дата</th>
+                <th style="width: 40px; text-align: center;"></th>
               </tr>
             </thead>
             <tbody id="dash-transactions"
@@ -421,6 +422,46 @@
     if (refreshBtn) refreshBtn.addEventListener('click', drawDetail);
     if (metricEl) metricEl.addEventListener('change', drawDetail);
     if (rangeEl) rangeEl.addEventListener('change', drawDetail);
+
+    // Удаление транзакций
+    document.addEventListener('click', async function (e) {
+      const btn = e.target.closest('.btn-delete-tx');
+      if (!btn) return;
+      const paymentId = btn.getAttribute('data-payment-id');
+      if (!paymentId) return;
+
+      if (!confirm(`Подтвердите удаление транзакции #${paymentId}?`)) {
+        return;
+      }
+
+      try {
+        const metaCsrf = document.querySelector('meta[name="csrf-token"]');
+        const csrfToken = metaCsrf ? metaCsrf.getAttribute('content') : '';
+
+        const resp = await fetch('/api/transactions/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+          },
+          body: JSON.stringify({ payment_id: paymentId })
+        });
+
+        const data = await resp.json();
+        if (data && data.success) {
+          if (typeof window.showToast === 'function') {
+            window.showToast('success', `Транзакция #${paymentId} успешно удалена.`);
+          }
+          window.location.reload();
+        } else {
+          const err = (data && data.error) || 'Ошибка при удалении транзакции';
+          alert(err);
+        }
+      } catch (err) {
+        console.error('Ошибка удаления транзакции:', err);
+        alert('Сетевая ошибка при удалении транзакции.');
+      }
+    });
   });
 </script>
 

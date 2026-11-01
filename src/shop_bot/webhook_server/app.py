@@ -49,7 +49,8 @@ from shop_bot.data_manager.database import (
     get_all_keys, get_keys_for_user, get_key_by_id, delete_key_by_id, update_key_comment, update_key_info,
     add_new_key, get_balance, adjust_user_balance, get_referrals_for_user,
     get_user, get_key_by_email, get_host, get_traffic_sources_stats,
-    find_and_complete_pending_transaction, get_transaction_by_provider_payment_id, get_plan_by_id)
+    find_and_complete_pending_transaction, get_transaction_by_provider_payment_id, get_plan_by_id,
+    delete_transaction)
 
 
 _bot_controller = None
@@ -420,6 +421,25 @@ def create_webhook_app(bot_controller_instance):
     def dashboard_charts_json():
         data = get_daily_stats_for_charts(days=30)
         return jsonify(data)
+
+    @csrf.exempt
+    @flask_app.route('/api/transactions/delete', methods=['POST'])
+    def api_delete_transaction():
+        if 'logged_in' not in session:
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+            payment_id = str(data.get('payment_id', '')).strip()
+            if not payment_id:
+                return jsonify({'success': False, 'error': 'payment_id is required'}), 400
+            
+            ok = delete_transaction(payment_id)
+            if ok:
+                return jsonify({'success': True})
+            return jsonify({'success': False, 'error': 'Транзакция не найдена'}), 404
+        except Exception as e:
+            logger.error(f"Ошибка api_delete_transaction: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
     # --- Resource Monitor ---
     @flask_app.route('/monitor')
     @login_required

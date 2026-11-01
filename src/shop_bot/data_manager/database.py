@@ -2660,6 +2660,20 @@ def get_transaction_by_provider_payment_id(provider: str, provider_payment_id: s
         logging.error(f"Error checking transaction for provider {provider} id {provider_payment_id}: {e}")
         return None
 
+def delete_transaction(payment_id: str) -> bool:
+    try:
+        payment_id_str = str(payment_id).strip()
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM transactions WHERE payment_id = ?", (payment_id_str,))
+            if cursor.rowcount == 0:
+                cursor.execute("DELETE FROM transactions WHERE transaction_id = ?", (payment_id_str,))
+            conn.commit()
+            return cursor.rowcount > 0
+    except Exception as e:
+        logger.error(f"Ошибка при удалении транзакции {payment_id}: {e}")
+        return False
+
 def get_exchange_rate_from_db(currency_pair: str) -> dict | None:
     """Retrieve cached exchange rate from exchange_rates table."""
     try:
